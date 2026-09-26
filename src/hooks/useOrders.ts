@@ -222,7 +222,7 @@ export function useOrders() {
   const createPendingOrder = useCallback((orderData: Omit<IOrder, 'id' | 'statusTimeline' | 'createdAt' | 'status' | 'paidAt' | 'payExpireAt'>): IOrder => {
     const now = Date.now()
     const id = `ORD${now}`
-    const expireAt = now + 15 * 60 * 1000 // 15 分钟支付时效
+    const expireAt = now + PAY_TIMEOUT_MS // 待支付时效，统一由常量管理
     const newOrder: IOrder = {
       ...orderData,
       id,
