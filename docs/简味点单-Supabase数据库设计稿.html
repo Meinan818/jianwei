@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>简味点单 · Supabase 数据库设计稿 v0.1（待评审）</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23f97316'/%3E%3Ctext x='32' y='45' font-size='34' text-anchor='middle' fill='white' font-family='sans-serif'%3E%E7%AE%80%3C/text%3E%3C/svg%3E">
+<style>
+  :root{
+    --orange:#f97316; --orange-d:#ea580c; --orange-l:#ffedd5; --orange-bg:#fff8f3;
+    --cust:#f97316; --mer:#eab308; --ride:#64748b;
+    --ink:#1f2937; --sub:#6b7280; --line:#fed7aa; --card:#ffffff; --bg:#fdf3ea;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    line-height:1.65;font-size:15px}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 16px 64px}
+  header.hero{background:linear-gradient(135deg,#ff7a18,#f97316 55%,#ea580c);color:#fff;padding:34px 16px 28px}
+  header.hero .inner{max-width:1080px;margin:0 auto}
+  header.hero h1{margin:0 0 6px;font-size:24px;letter-spacing:.5px}
+  header.hero p{margin:0;opacity:.94;font-size:14px}
+  .tag{display:inline-block;background:rgba(255,255,255,.2);border:1px solid rgba(255,255,255,.35);
+    border-radius:999px;padding:2px 10px;font-size:12px;margin-right:6px;margin-top:8px}
+  h2{font-size:19px;margin:34px 0 12px;padding-left:11px;border-left:5px solid var(--orange)}
+  h3{font-size:15px;margin:18px 0 8px;color:var(--orange-d)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin:12px 0;
+    box-shadow:0 2px 10px rgba(234,88,12,.05)}
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:16px 0}
+  .stat{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 8px;text-align:center}
+  .stat b{display:block;font-size:22px;color:var(--orange-d)}
+  .stat span{font-size:12px;color:var(--sub)}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;background:#fff;border-radius:10px;overflow:hidden}
+  .tbl-scroll{overflow-x:auto;border:1px solid var(--line);border-radius:12px}
+  th,td{padding:8px 10px;border-bottom:1px solid #ffedd5;text-align:left;vertical-align:top}
+  th{background:var(--orange-l);white-space:nowrap;font-weight:600}
+  tr:last-child td{border-bottom:none}
+  code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;
+    background:#fff1e2;border-radius:5px;padding:1px 5px;color:#c2410c}
+  .domains{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .domain{border:1.5px solid var(--line);border-radius:12px;overflow:hidden}
+  .domain .dh{padding:8px 12px;font-weight:700;font-size:14px;color:#fff}
+  .d1 .dh{background:#f97316}.d2 .dh{background:#fb923c}.d3 .dh{background:#fdba74;color:#7c2d12}.d4 .dh{background:#64748b}
+  .domain .db{padding:8px 12px}
+  .tt{font-weight:700;font-size:13.5px;margin:7px 0 1px;color:#9a3412}
+  .tt small{font-weight:400;color:var(--sub);margin-left:4px}
+  .cols{font-size:12px;color:var(--sub);margin:0 0 4px;padding-left:2px}
+  .legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12.5px;color:var(--sub);margin:8px 0}
+  .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:middle}
+  .note{background:#fff7ed;border:1px dashed var(--orange);border-radius:10px;padding:10px 12px;font-size:13.5px;margin:10px 0}
+  .decide{counter-reset:d}
+  .decide .q{background:#fff;border:1px solid var(--line);border-left:4px solid var(--orange);border-radius:10px;
+    padding:10px 14px;margin:10px 0;font-size:14px}
+  .decide .q b{color:var(--orange-d)}
+  .rec{color:#15803d;font-weight:600}
+  .phase{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+  .ph{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px;position:relative}
+  .ph .n{display:inline-flex;width:24px;height:24px;border-radius:50%;background:var(--orange);color:#fff;
+    align-items:center;justify-content:center;font-size:13px;font-weight:700;margin-bottom:6px}
+  .ph b{font-size:14px}.ph p{margin:4px 0 0;font-size:12.5px;color:var(--sub)}
+  .svgbox{width:100%;overflow-x:auto;background:#fff;border:1px solid var(--line);border-radius:12px;padding:8px}
+  svg{display:block;min-width:680px;width:100%;height:auto}
+  footer{margin-top:36px;color:var(--sub);font-size:12.5px;text-align:center}
+  @media(max-width:720px){
+    .stats{grid-template-columns:repeat(2,1fr)}
+    .domains{grid-template-columns:1fr}
+    .phase{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body>
+<header class="hero"><div class="inner">
+  <h1>简味点单 · Supabase 数据库设计稿</h1>
+  <p>版本 v0.1（待你评审，确认后才在妙搭工程里动代码）· 基线 v25 / commit 01eaf34 · 2026-09-15</p>
+  <span class="tag">PostgreSQL 15</span><span class="tag">24 张表</span><span class="tag">16 枚举</span>
+  <span class="tag">56 条 RLS 策略</span><span class="tag">3 个原子 RPC</span><span class="tag">3 个 Storage 桶</span>
+</div></header>
+<div class="wrap">
+
+  <h2>一、总览：18 个本地存储域 → 24 张云端表</h2>
+  <div class="stats">
+    <div class="stat"><b>24</b><span>数据表</span></div>
+    <div class="stat"><b>1:1</b><span>账号↔店铺硬约束</span></div>
+    <div class="stat"><b>9</b><span>订单状态</span></div>
+    <div class="stat"><b>4</b><span>Realtime 同步通道</span></div>
+  </div>
+  <div class="card">
+    <b>四条设计原则</b>
+    <ol style="margin:8px 0 0;padding-left:20px">
+      <li><b>真源在库</b>：现在散落在 localStorage 的 18 个 key 全部上云，三端读写同一份数据，实时联动。</li>
+      <li><b>快照冗余</b>：订单里冗余菜名、店名、头像、地址快照——商家后来改名改价，不影响历史订单与评价。</li>
+      <li><b>安全靠 RLS</b>：anon key 本就是公开的，所有越权防护由 56 条行级策略 + 3 个服务端 RPC 承担。</li>
+      <li><b>一账号一店铺</b>：<code>shops.owner_id</code> 加 UNIQUE 约束，数据库层面就建不出第二家店。</li>
+    </ol>
+  </div>
+
+  <h2>二、ER 关系图（按四个业务域分组，标注基数）</h2>
+  <div class="legend">
+    <span><i class="dot" style="background:#f97316"></i>账号/商家域</span>
+    <span><i class="dot" style="background:#fb923c"></i>交易域</span>
+    <span><i class="dot" style="background:#fdba74"></i>互动域</span>
+    <span><i class="dot" style="background:#64748b"></i>资金/营销域</span>
+    <span>1:1 = 一对一　1:N = 一对多　N:1 = 多对一</span>
+  </div>
+  <div class="domains">
+    <div class="domain d1">
+      <div class="dh">① 账号 / 商家域</div>
+      <div class="db">
+        <div class="tt">profiles <small>账号档案，与 auth.users 1:1</small></div>
+        <p class="cols">id→auth.users · role(customer/merchant/rider) · phone · nickname · avatar_url · is_online(骑手) · balance · growth_points · is_vip · pay_password[MOCK]</p>
+        <div class="tt">shops <small>店铺，owner 1:1</small></div>
+        <p class="cols">owner_id→profiles UNIQUE · 名称/评分/起送价/配送费 · is_open 营业开关 · is_demo 演示店</p>
+        <div class="tt">categories <small>N:1 shops</small></div><p class="cols">name · sort</p>
+        <div class="tt">dishes <small>N:1 shops / categories</small></div>
+        <p class="cols">price · image_url · stock(-1不限) · sold_out · on_shelf · sales</p>
+        <div class="tt">dish_spec_groups → dish_spec_options</div><p class="cols">规格组（辣度）与选项（微辣/+2元），均 N:1 上级</p>
+        <div class="tt">dish_extras</div><p class="cols">加料 N:1 dishes（加蛋 +3）</p>
+        <div class="tt">shop_activities <small>N:1 shops</small></div>
+        <p class="cols">满减/新客/折扣/折扣菜/免配送费，阈值数组 + 开关</p>
+      </div>
+    </div>
+    <div class="domain d2">
+      <div class="dh">② 交易域</div>
+      <div class="db">
+        <div class="tt">orders <small>订单主表（核心）</small></div>
+        <p class="cols">shop_id→shops · customer_id→profiles · rider_id→profiles(可空=待抢) · status 九态 · 六项金额 · 地址快照 · 时间线 jsonb · 各节点时间戳 · 催单/取消/拒单</p>
+        <div class="tt">order_items <small>N:1 orders</small></div>
+        <p class="cols">菜名/图片/单价快照 · 数量 · sku_key · specs/extras jsonb</p>
+        <div class="tt">refund_requests <small>1:1 orders</small></div>
+        <p class="cols">退款五态 pending→approved/rejected→processing→completed</p>
+        <div class="tt">delivery_exceptions <small>N:1 orders</small></div>
+        <p class="cols">联系不上顾客/出餐慢/地址错/天气/其他 + 处理结果</p>
+        <div class="tt">addresses <small>N:1 profiles</small></div>
+        <p class="cols">收货人/电话/地址/标签/默认（每号至多一个默认）</p>
+      </div>
+    </div>
+    <div class="domain d3">
+      <div class="dh">③ 互动域</div>
+      <div class="db">
+        <div class="tt">conversations <small>会话</small></div>
+        <p class="cols">customer_id + merchant_id + rider_id(可空) · order_id(下单前咨询可空) · 末条消息</p>
+        <div class="tt">messages <small>N:1 conversations</small></div>
+        <p class="cols">sender_id/role 快照 · content · is_read（Realtime）</p>
+        <div class="tt">reviews <small>1:1 orders · N:1 shops</small></div>
+        <p class="cols">四项星级 · 标签 · 图文(最多6张 URL) · 菜品分项打分 · 匿名 · 商家回复</p>
+        <div class="tt">notifications <small>N:1 profiles</small></div>
+        <p class="cols">system/order/activity 三类 · 已读 · 跳转 action_url</p>
+        <div class="tt">favorites / footprints</div><p class="cols">收藏(用户×店铺联合主键) / 足迹时间线</p>
+      </div>
+    </div>
+    <div class="domain d4">
+      <div class="dh">④ 资金 / 营销域</div>
+      <div class="db">
+        <div class="tt">coupons <small>平台券模板</small></div>
+        <p class="cols">满减/折扣/无门槛 · 面额/门槛/到期日（领券中心）</p>
+        <div class="tt">user_coupons <small>N:1 profiles+coupons</small></div>
+        <p class="cols">claimed/used/expired 三态，(用户,券)唯一</p>
+        <div class="tt">wallet_transactions <small>N:1 profiles</small></div>
+        <p class="cols">充值/消费/退款/奖励/提现/收益，只追加不改写，余额以 profiles.balance 为准</p>
+        <div class="tt">point_records</div><p class="cols">成长值/积分流水 earn/spend/expire</p>
+        <div class="tt">withdraw_records</div>
+        <p class="cols">顾客钱包+商家财务+骑手收入共用，actor_role 区分三端</p>
+      </div>
+    </div>
+  </div>
+
+  <h3>核心关系链（下单 → 配送 → 评价的主干）</h3>
+  <div class="svgbox">
+  <svg viewBox="0 0 960 300" xmlns="http://www.w3.org/2000/svg" font-family="inherit">
+    <defs>
+      <marker id="ar" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+        <path d="M0,0 L9,4.5 L0,9 Z" fill="#ea580c"/>
+      </marker>
+    </defs>
+    <!-- auth -->
+    <rect x="20" y="20" width="150" height="46" rx="9" fill="#fff7ed" stroke="#f97316" stroke-width="1.6"/>
+    <text x="95" y="40" text-anchor="middle" font-size="13" font-weight="700" fill="#9a3412">auth.users</text>
+    <text x="95" y="57" text-anchor="middle" font-size="11" fill="#6b7280">Supabase 登录注册</text>
+    <rect x="230" y="20" width="150" height="46" rx="9" fill="#fff7ed" stroke="#f97316" stroke-width="1.6"/>
+    <text x="305" y="40" text-anchor="middle" font-size="13" font-weight="700" fill="#9a3412">profiles</text>
+    <text x="305" y="57" text-anchor="middle" font-size="11" fill="#6b7280">三端角色 1:1</text>
+    <line x1="170" y1="43" x2="226" y2="43" stroke="#ea580c" stroke-width="1.6" marker-end="url(#ar)"/>
+    <!-- shops -->
+    <rect x="440" y="20" width="150" height="46" rx="9" fill="#ffedd5" stroke="#f97316" stroke-width="1.6"/>
+    <text x="515" y="40" text-anchor="middle" font-size="13" font-weight="700" fill="#9a3412">shops 店铺</text>
+    <text x="515" y="57" text-anchor="middle" font-size="11" fill="#6b7280">owner_id UNIQUE</text>
+    <line x1="380" y1="43" x2="436" y2="43" stroke="#ea580c" stroke-width="1.6" marker-end="url(#ar)"/>
+    <text x="408" y="36" text-anchor="middle" font-size="10.5" fill="#c2410c">1:1</text>
+    <!-- shop children -->
+    <rect x="660" y="6" width="280" height="30" rx="7" fill="#fff" stroke="#fdba74"/>
+    <text x="800" y="26" text-anchor="middle" font-size="12" fill="#9a3412">categories → dishes → 规格/加料/活动 (1:N)</text>
+    <line x1="590" y1="36" x2="656" y2="26" stroke="#ea580c" stroke-width="1.4" marker-end="url(#ar)"/>
+    <!-- orders row -->
+    <rect x="230" y="130" width="190" height="56" rx="9" fill="#ffedd5" stroke="#fb923c" stroke-width="1.8"/>
+    <text x="325" y="153" text-anchor="middle" font-size="14" font-weight="700" fill="#9a3412">orders 订单</text>
+    <text x="325" y="172" text-anchor="middle" font-size="11" fill="#6b7280">顾客下单 · 骑手 rider_id 抢单</text>
+    <line x1="305" y1="66" x2="320" y2="126" stroke="#ea580c" stroke-width="1.5" marker-end="url(#ar)"/>
+    <text x="286" y="100" font-size="10.5" fill="#c2410c">店铺 1:N</text>
+    <line x1="305" y1="66" x2="260" y2="126" stroke="#94a3b8" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#ar)"/>
+    <text x="232" y="100" font-size="10.5" fill="#64748b">顾客 1:N</text>
+    <!-- order children -->
+    <rect x="500" y="100" width="160" height="32" rx="7" fill="#fff" stroke="#fdba74"/>
+    <text x="580" y="121" text-anchor="middle" font-size="12" fill="#9a3412">order_items 1:N 快照</text>
+    <line x1="420" y1="145" x2="496" y2="122" stroke="#ea580c" stroke-width="1.4" marker-end="url(#ar)"/>
+    <rect x="500" y="142" width="160" height="32" rx="7" fill="#fff" stroke="#fdba74"/>
+    <text x="580" y="163" text-anchor="middle" font-size="12" fill="#9a3412">refund_requests 1:1</text>
+    <line x1="420" y1="160" x2="496" y2="158" stroke="#ea580c" stroke-width="1.4" marker-end="url(#ar)"/>
+    <rect x="500" y="184" width="160" height="32" rx="7" fill="#fff" stroke="#fdba74"/>
+    <text x="580" y="205" text-anchor="middle" font-size="12" fill="#9a3412">delivery_exceptions 1:N</text>
+    <line x1="420" y1="176" x2="496" y2="198" stroke="#ea580c" stroke-width="1.4" marker-end="url(#ar)"/>
+    <!-- downstream -->
+    <rect x="730" y="120" width="210" height="34" rx="7" fill="#fff" stroke="#fdba74"/>
+    <text x="835" y="142" text-anchor="middle" font-size="12" fill="#9a3412">conversations → messages IM</text>
+    <rect x="730" y="166" width="210" height="34" rx="7" fill="#fff" stroke="#fdba74"/>
+    <text x="835" y="188" text-anchor="middle" font-size="12" fill="#9a3412">reviews 送达后评价 1:1</text>
+    <line x1="660" y1="130" x2="726" y2="137" stroke="#ea580c" stroke-width="1.3" marker-end="url(#ar)"/>
+    <line x1="660" y1="165" x2="726" y2="180" stroke="#ea580c" stroke-width="1.3" marker-end="url(#ar)"/>
+    <!-- wallet -->
+    <rect x="230" y="240" width="430" height="40" rx="9" fill="#f1f5f9" stroke="#94a3b8"/>
+    <text x="445" y="258" text-anchor="middle" font-size="12.5" font-weight="700" fill="#334155">资金/营销：coupons+user_coupons · wallet_transactions · point_records · withdraw_records</text>
+    <text x="445" y="273" text-anchor="middle" font-size="10.5" fill="#64748b">全部 N:1 挂在 profiles 上，支付成功/退款时由 RPC 原子记账</text>
+    <line x1="325" y1="186" x2="360" y2="236" stroke="#94a3b8" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#ar)"/>
+  </svg>
+  </div>
+
+  <h2>三、订单状态机（九态 + 三端操作权限，服务端 trigger 兜底）</h2>
+  <div class="legend">
+    <span><i class="dot" style="background:#f97316"></i>顾客触发</span>
+    <span><i class="dot" style="background:#eab308"></i>商家触发</span>
+    <span><i class="dot" style="background:#64748b"></i>骑手触发</span>
+    <span><i class="dot" style="background:#dc2626"></i>终止态</span>
+  </div>
+  <div class="svgbox">
+  <svg viewBox="0 0 960 250" xmlns="http://www.w3.org/2000/svg" font-family="inherit">
+    <defs><marker id="ar2" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 Z" fill="#57534e"/></marker></defs>
+    <!-- main chain -->
+    <!-- boxes x positions: 10,140,270,400,530,660,790 ; y 60 -->
+    <g font-size="11.5" text-anchor="middle">
+      <rect x="6"   y="55" width="118" height="42" rx="9" fill="#ffedd5" stroke="#f97316" stroke-width="1.6"/>
+      <text x="65"  y="73" font-weight="700" fill="#9a3412">pending_payment</text><text x="65" y="89" fill="#6b7280">待支付</text>
+      <rect x="136" y="55" width="118" height="42" rx="9" fill="#fef9c3" stroke="#eab308" stroke-width="1.6"/>
+      <text x="195" y="73" font-weight="700" fill="#854d0e">pending</text><text x="195" y="89" fill="#6b7280">待接单</text>
+      <rect x="266" y="55" width="118" height="42" rx="9" fill="#fef9c3" stroke="#eab308" stroke-width="1.6"/>
+      <text x="325" y="73" font-weight="700" fill="#854d0e">preparing</text><text x="325" y="89" fill="#6b7280">备餐中</text>
+      <rect x="396" y="55" width="118" height="42" rx="9" fill="#fef9c3" stroke="#eab308" stroke-width="1.6"/>
+      <text x="455" y="73" font-weight="700" fill="#854d0e">ready</text><text x="455" y="89" fill="#6b7280">待取餐/抢单大厅</text>
+      <rect x="526" y="55" width="118" height="42" rx="9" fill="#f1f5f9" stroke="#64748b" stroke-width="1.6"/>
+      <text x="585" y="73" font-weight="700" fill="#334155">picked</text><text x="585" y="89" fill="#6b7280">已抢单·到店取餐</text>
+      <rect x="656" y="55" width="118" height="42" rx="9" fill="#f1f5f9" stroke="#64748b" stroke-width="1.6"/>
+      <text x="715" y="73" font-weight="700" fill="#334155">delivering</text><text x="715" y="89" fill="#6b7280">配送中</text>
+      <rect x="786" y="55" width="160" height="42" rx="9" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/>
+      <text x="866" y="73" font-weight="700" fill="#166534">delivered</text><text x="866" y="89" fill="#6b7280">已送达（计销量/可评价）</text>
+    </g>
+    <g stroke="#57534e" stroke-width="1.5" marker-end="url(#ar2)">
+      <line x1="124" y1="76" x2="134" y2="76"/>
+      <line x1="254" y1="76" x2="264" y2="76"/>
+      <line x1="384" y1="76" x2="394" y2="76"/>
+      <line x1="514" y1="76" x2="524" y2="76"/>
+      <line x1="644" y1="76" x2="654" y2="76"/>
+      <line x1="774" y1="76" x2="784" y2="76"/>
+    </g>
+    <g font-size="10.5" fill="#6b7280" text-anchor="middle">
+      <text x="129" y="68">支付</text><text x="259" y="68">接单</text>
+      <text x="389" y="68">出餐</text><text x="519" y="68">claim</text><text x="649" y="68">取餐</text><text x="779" y="68">送达</text>
+    </g>
+    <!-- terminal states -->
+    <rect x="136" y="160" width="120" height="40" rx="9" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5"/>
+    <text x="196" y="184" text-anchor="middle" font-size="12" font-weight="700" fill="#991b1b">rejected 商家拒单</text>
+    <rect x="300" y="160" width="130" height="40" rx="9" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5"/>
+    <text x="365" y="184" text-anchor="middle" font-size="12" font-weight="700" fill="#991b1b">cancelled 已取消</text>
+    <g stroke="#dc2626" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#ar2)">
+      <line x1="195" y1="97" x2="196" y2="158"/>
+      <path d="M195,97 L250,140 L330,158" fill="none"/>
+      <path d="M65,97 C65,150 250,150 320,158" fill="none"/>
+    </g>
+    <text x="120" y="140" font-size="10.5" fill="#991b1b">pending 可拒单</text>
+    <text x="250" y="220" font-size="11" fill="#6b7280">顾客在 待支付/待接单 可取消；超时未支付由定时任务置 cancelled</text>
+    <text x="20" y="220" font-size="11" fill="#6b7280"></text>
+  </svg>
+  </div>
+  <div class="note">
+    <b>并发抢单</b>：两个骑手同时点抢单，<code>claim_order()</code> RPC 用一条
+    <code>UPDATE ... WHERE status='ready' AND rider_id IS NULL</code> 原子完成，只有一人成功，另一人收到「手慢一步」。
+    非法状态跳转由 <code>guard_order_transition</code> 触发器在数据库层直接拒绝。
+  </div>
+
+  <h2>四、表字典（24 张表 ↔ 现有 localStorage 键）</h2>
+  <div class="tbl-scroll"><table>
+    <colgroup><col style="width:17%"><col style="width:30%"><col style="width:28%"><col style="width:25%"></colgroup>
+    <thead><tr><th>表</th><th>职责 / 关键字段</th><th>替换的本地存储</th><th>谁能写（RLS）</th></tr></thead>
+    <tbody>
+      <tr><td><code>profiles</code></td><td>角色/昵称/头像/骑手在线/余额成长值，挂 auth.users</td><td>food_delivery_auth、user、member、rider_status</td><td>仅本人改</td></tr>
+      <tr><td><code>shops</code></td><td>店铺资料+营业开关，owner_id 唯一</td><td>user_shops、user_shop_relation、shop_status 店铺部分</td><td>店主（merchant）</td></tr>
+      <tr><td><code>categories</code></td><td>店内栏目</td><td>shop_status.customCategories</td><td>店主</td></tr>
+      <tr><td><code>dishes</code> / spec_groups / spec_options / extras</td><td>菜品、上下架、库存售罄、规格加料（规范化子表）</td><td>MOCK_SHOPS 内嵌菜品 + shop_status.dishes 覆盖层</td><td>店主</td></tr>
+      <tr><td><code>shop_activities</code></td><td>五类营销活动，顾客端实时生效</td><td>shop_status.activities / promotion</td><td>店主</td></tr>
+      <tr><td><code>orders</code></td><td>订单主表+金额快照+时间戳+状态机</td><td>food_delivery_orders</td><td>顾客/店主/骑手按状态分权</td></tr>
+      <tr><td><code>order_items</code></td><td>菜品快照+规格加料 jsonb</td><td>orders.items</td><td>下单顾客</td></tr>
+      <tr><td><code>refund_requests</code></td><td>售后退款五态</td><td>orders.refundRequest</td><td>顾客发起/店主处理</td></tr>
+      <tr><td><code>delivery_exceptions</code></td><td>骑手异常上报</td><td>orders.deliveryExceptions</td><td>上报人/店主</td></tr>
+      <tr><td><code>addresses</code></td><td>收货地址，单默认地址</td><td>food_delivery_addresses</td><td>仅本人</td></tr>
+      <tr><td><code>conversations / messages</code></td><td>IM 会话与消息，Realtime</td><td>food_delivery_messages</td><td>会话三方</td></tr>
+      <tr><td><code>reviews</code></td><td>四项星级+标签+6 图+菜品打分+回复</td><td>food_delivery_reviews</td><td>顾客发/店主 RPC 回</td></tr>
+      <tr><td><code>notifications</code></td><td>系统/订单/活动通知</td><td>food_delivery_notifications</td><td>仅本人</td></tr>
+      <tr><td><code>favorites / footprints</code></td><td>收藏店铺 / 浏览足迹</td><td>food_delivery_favorites（足迹新增）</td><td>仅本人</td></tr>
+      <tr><td><code>coupons / user_coupons</code></td><td>券模板 + 领取使用三态</td><td>food_delivery_coupons</td><td>本人领/用，模板控制台维护</td></tr>
+      <tr><td><code>wallet_transactions</code></td><td>钱包流水（只追加）</td><td>wallet、wallet_records</td><td>仅本人（经 RPC）</td></tr>
+      <tr><td><code>point_records</code></td><td>成长值/积分流水</td><td>member 内嵌积分</td><td>仅本人</td></tr>
+      <tr><td><code>withdraw_records</code></td><td>三端提现统一表</td><td>withdraw_records、finance_withdraw</td><td>仅本人</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>五、RLS 权限矩阵（行级安全，anon key 公开也安全）</h2>
+  <div class="tbl-scroll"><table>
+    <colgroup><col style="width:20%"><col style="width:26%"><col style="width:27%"><col style="width:27%"></colgroup>
+    <thead><tr><th>数据</th><th>顾客 customer</th><th>商家 merchant</th><th>骑手 rider</th></tr></thead>
+    <tbody>
+      <tr><td>店铺/菜品/活动</td><td>只读浏览</td><td>只能改 owner_id=自己的店</td><td>只读</td></tr>
+      <tr><td>订单 orders</td><td>只能读/取消 customer_id=自己的；只能为自己下单</td><td>只能读/处理本店订单（接单/出餐/拒单/售后）</td><td>可读待抢单(ready)与自己接的单；抢单后 rider_id=自己才可推进</td></tr>
+      <tr><td>地址/收藏/钱包/积分/通知/我的券</td><td>仅本人全读写</td><td>不可见他人</td><td>不可见他人</td></tr>
+      <tr><td>IM 消息</td><td>仅参与的会话</td><td>仅本店相关会话</td><td>仅自己参与的会话</td></tr>
+      <tr><td>评价</td><td>只能为自己订单发评价</td><td>只能回复本店评价（RPC 限定字段）</td><td>只读</td></tr>
+      <tr><td>提现</td><td>本人记录</td><td>本店财务记录</td><td>本人跑单收入</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note">演示店（<code>is_demo=true</code>，owner_id 为空）所有人可读、无人能改；商家自建店 owner_id 自动绑定注册账号，RLS 保证看不到也改不了别人的店。</div>
+
+  <h2>六、Realtime 实时同步 & Storage 图片存储</h2>
+  <div class="domains">
+    <div class="domain d2"><div class="dh">Realtime（替换现有 CustomEvent）</div><div class="db">
+      <p class="cols"><b>orders</b>：顾客订阅自己订单看状态推进；商家订阅本店新单；骑手大厅订阅 ready 待抢单。</p>
+      <p class="cols"><b>messages</b>：IM 新消息即时到达，替代本地轮询。</p>
+      <p class="cols"><b>refund / exceptions / notifications</b>：售后、异常、通知角标实时刷新。</p>
+      <p class="cols"><b>骑手位置</b>：不入库，走 Broadcast 频道 <code>rider:{骑手id}</code>，顾客订单地图直接订阅（位置是瞬时数据，落库无意义且省额度）。</p>
+    </div></div>
+    <div class="domain d4"><div class="dh">Storage（替换 base64 塞 localStorage）</div><div class="db">
+      <p class="cols"><b>avatars</b> 头像桶：路径 <code>{uid}/x.jpg</code>，仅本人可写，公开读。</p>
+      <p class="cols"><b>dish-images</b> 菜品桶：路径 <code>{shopId}/x.jpg</code>，RLS 校验是店主才可传。</p>
+      <p class="cols"><b>review-images</b> 评价桶：路径 <code>{uid}/x.jpg</code>，仅本人可写。</p>
+      <p class="cols">三个桶全部公开读（前端 &lt;img&gt; 直接显示）；上传走 supabase-js，不再把图片转 base64 撑爆本地存储。</p>
+    </div></div>
+  </div>
+
+  <h2>七、迁移分期（每一期都能独立跑通、可发版留存）</h2>
+  <div class="phase">
+    <div class="ph"><span class="n">0</span><b>建库与种子</b><p>建 Supabase 项目（区域选新加坡，建后不可改）→ 执行本 SQL → seed 8 家演示店与券模板。</p></div>
+    <div class="ph"><span class="n">1</span><b>Auth 登录</b><p>supabase-js 初始化；邮箱+密码真实注册登录；演示码 123456 保留为前端 Mock 入口；三端账号池沿用。</p></div>
+    <div class="ph"><span class="n">2</span><b>店铺菜品上云</b><p>首页/商家详情读 shops+dishes；商家端商品管理、营销活动、营业开关写库。</p></div>
+    <div class="ph"><span class="n">3</span><b>订单三端联动</b><p>下单写 orders/items；商家接单出餐；骑手 claim_order 抢单；Realtime 推送状态。</p></div>
+    <div class="ph"><span class="n">4</span><b>IM/通知/评价</b><p>会话消息 Realtime、通知中心、带图评价（Storage 上传）、商家回复。</p></div>
+    <div class="ph"><span class="n">5</span><b>资金与收尾</b><p>券领取使用、钱包 RPC 记账、提现、收藏足迹；清除 localStorage 旧逻辑。</p></div>
+  </div>
+
+  <h2>八、需要你拍板的 5 个设计决策</h2>
+  <div class="decide">
+    <div class="q"><b>决策 1 · 登录方式。</b>Supabase 免费版手机号短信要收费，方案是「邮箱+密码」做真实登录，登录页保留「验证码演示入口」：输入任意手机号 + 固定演示码 123456 进入内置演示账号（纯前端 Mock，文档注明预留真实短信接入点）。<br><span class="rec">建议：按此方案。</span></div>
+    <div class="q"><b>决策 2 · 三端账号池。</b>一个 Supabase 账号绑定一个角色（注册时从顾客/商家/骑手端进入即定角色），保持「三端独立、绝不串号」；同一个人想体验三端就注册三个邮箱（如 xxx+customer/@xxx）。<br><span class="rec">建议：按此方案，与现状一致。</span></div>
+    <div class="q"><b>决策 3 · 规格/加料存储。</b>本稿采用规范化子表（spec_groups/options/extras），结构清晰、作品集加分、RLS 随菜品走；备选是直接在 dishes 放 jsonb（前端改动更小但不像正经数据库设计）。<br><span class="rec">建议：用规范化子表。</span></div>
+    <div class="q"><b>决策 4 · 演示店。</b>现有 8 家内置店（饭否、川味轩…）用 seed 脚本写入数据库、标 is_demo=true，所有顾客可见、任何账号不可改；商家自建店与之并列展示（对应现有 getAllShops 合并逻辑）。<br><span class="rec">建议：按此方案。</span></div>
+    <div class="q"><b>决策 5 · 骑手位置。</b>实时位置走 Realtime Broadcast 不落库（省存储、天然实时），订单上只保留最终各节点时间戳。<br><span class="rec">建议：按此方案。</span></div>
+  </div>
+
+  <div class="note" style="border-color:#16a34a;background:#f0fdf4">
+    <b>你确认后我做什么：</b>① 按你的选择微调 SQL → ② 写 seed 演示数据脚本 → ③ 给你一份「Supabase 控制台逐步操作清单」（建项目/跑 SQL/开 Auth/建桶，约 10 分钟）→ ④ 回到妙搭按七的分期开始第 1 期改造，每期改完发版并按老规矩留存 commit 基线+台账。
+  </div>
+
+  <footer>简味点单 · 数据库设计稿 v0.1 · 配套迁移文件：jianwei-app/supabase/migrations/20260915000000_init_schema.sql（24 表 / 56 RLS / 3 RPC）</footer>
+</div></body></html>
