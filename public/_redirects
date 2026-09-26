@@ -1,0 +1,2 @@
+# Cloudflare Pages：SPA 兜底，刷新任意子路径都回落到 index.html，避免 404
+/* /index.html 200
