@@ -170,6 +170,10 @@ rejected         商家拒单（终态）
   `20260927010000_realtime_shop_config.sql`：把 `conversations` 与商家侧配置表
   （shops/categories/dishes/shop_activities/规格加料）补进 `supabase_realtime` publication；
   **后者已经把前者包含在内，只需要跑后者**（两份都可重复执行）。
+- `supabase/migrations/20260928000000_fix_order_items_dedupe.sql`：**一次性数据清理**——删掉 2026-09-28 那个
+  bug 写重复的 `order_items` 行（每笔订单的每个菜品组合只保留一行），并加 `(order_id, sort)` 唯一索引防止再犯。
+  必须在 **Supabase 控制台 → SQL Editor** 执行：应用侧刻意没有 `order_items` 的删除权限（明细是快照）。
+  可重复执行；跑完的自检应当每笔订单「明细合计 = 商品小计」。
 - `docs/Supabase控制台操作清单.md`：在 Supabase 控制台的逐步操作手册。
 - `docs/简味点单-Supabase数据库设计稿.html`：数据库设计可视化（ER 图、枚举、RLS 说明），浏览器直接打开。
 
@@ -225,7 +229,10 @@ rejected         商家拒单（终态）
       `ensureShopsLoaded()`，商家端页面一律只调 `getAllShops()` + `useShopStatus()`，没人触发加载
       → `getAllShops()` 回退到内置演示店铺（id `'1'`~`'8'`）→ 商家自己的 uuid 店铺找不到。
       现在 `useShopStatus` 登录后触发一次（幂等，覆盖所有商家端页面），该页也加了明确的失败提示。
-    - 遗留数据：ORD000055 / ORD000037 / ORD000003 的重复明细行仍在库里，待用户确认后再清理。    - **商家拒单不生效（2026-09-28 二次修复，用户反馈）**：两个叠加的根因——
+    - 遗留数据清理：`20260928000000_fix_order_items_dedupe.sql`（**需在 Supabase 控制台执行一次**，
+      应用侧没有 order_items 的删除权限）。用户已于 2026-09-28 确认要清理；
+      清理前实测 295 行 → 6 行（删 289 行多余数据），每笔订单金额仍与商品小计一致。
+      脚本还会加 `(order_id, sort)` 唯一索引，若以后代码又写重了会直接撞冲突而不是静默堆积。    - **商家拒单不生效（2026-09-28 二次修复，用户反馈）**：两个叠加的根因——
       ① `upsertOrder` 用「先 INSERT 遇 23505 再 UPDATE」，但 `orders` 的 insert 策略只放行顾客，
       商家插入先撞 **RLS 42501**（实测：商家 42501、顾客 23505），UPDATE 永远执行不到 →
       商家接单/拒单/出餐全都写不进数据库。改成「先按主键 UPDATE，0 行再 INSERT」
