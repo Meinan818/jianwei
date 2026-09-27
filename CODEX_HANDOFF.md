@@ -225,7 +225,17 @@ rejected         商家拒单（终态）
       `ensureShopsLoaded()`，商家端页面一律只调 `getAllShops()` + `useShopStatus()`，没人触发加载
       → `getAllShops()` 回退到内置演示店铺（id `'1'`~`'8'`）→ 商家自己的 uuid 店铺找不到。
       现在 `useShopStatus` 登录后触发一次（幂等，覆盖所有商家端页面），该页也加了明确的失败提示。
-    - 遗留数据：ORD000055 / ORD000037 / ORD000003 的重复明细行仍在库里，待用户确认后再清理。
+    - 遗留数据：ORD000055 / ORD000037 / ORD000003 的重复明细行仍在库里，待用户确认后再清理。    - **商家拒单不生效（2026-09-28 二次修复，用户反馈）**：两个叠加的根因——
+      ① `upsertOrder` 用「先 INSERT 遇 23505 再 UPDATE」，但 `orders` 的 insert 策略只放行顾客，
+      商家插入先撞 **RLS 42501**（实测：商家 42501、顾客 23505），UPDATE 永远执行不到 →
+      商家接单/拒单/出餐全都写不进数据库。改成「先按主键 UPDATE，0 行再 INSERT」
+      （新增 `upsertByKey()`；`refund_requests`、`delivery_exceptions` 同样受益——店主的售后处理、
+      异常处理以前也写不进去）。
+      ② `normalizeOrder` 的状态白名单**漏了 `rejected`**（也漏了 `pending_payment`），归一化会把
+      rejected 悄悄改回 pending → "订单还在、仍显示待接单、顾客端什么也看不到"，
+      而库里留下一条带 `reject_reason` 却还是 pending 的畸形单。白名单已抽成 `ALL_ORDER_STATUSES`（9 态）
+      并补全，未知状态会打日志而不是静默改写。
+    - 回归脚本 `scripts/e2e-reject.html`：无头浏览器真实跑「商家拒单 → 顾客端历史订单出现已拒单」。
   - ✅ **2c 消息与会话已完成（2026-09-27）**：顾客↔商家跨设备聊天成立。
     新增 `src/data/messages-remote.ts` + `useMessages` 里的镜像层（思路同店铺/订单）。
     会话 id 直接沿用前端语义前缀（`shop:` / `om:` / `or:` / `rm:`）作为数据库主键，前后端无需再映射。

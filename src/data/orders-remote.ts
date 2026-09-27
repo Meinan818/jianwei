@@ -223,6 +223,48 @@ function orderToRow(o: IOrder) {
 }
 
 /**
+ * 按某个键「更新已有行，没有才插入」。
+ *
+ * ⚠️ 为什么不能用第 2 期 2c 的「先 INSERT，遇 23505 再 UPDATE」：
+ *   各表的 INSERT 策略往往只放行「创建者」，而 UPDATE 策略才放行商家/骑手——
+ *   orders 的 insert 策略要求 customer_id = 自己、refund_requests 同理、
+ *   delivery_exceptions 要求 reporter_id = 自己。商家去改别人的行时，
+ *   INSERT 会先撞 **RLS 42501**（而不是主键冲突 23505），旧代码把它当成"写失败"直接返回，
+ *   UPDATE 永远执行不到。2026-09-28 实测：商家 insert 自己店的订单 → 42501；
+ *   顾客 insert 同一行 → 23505。表现出来就是「商家拒单/接单写不进数据库、
+ *   刷新后又变回待接单、顾客端什么也看不到」。
+ *
+ * 正确顺序：先按 key 列 UPDATE（已存在的行走 UPDATE 策略）；
+ *   返回 0 行说明这行还不存在 → 再 INSERT；INSERT 撞 23505（刚好被别端插进去）→ 再 UPDATE 一次。
+ *
+ * 返回 'updated' / 'inserted' / null（null = 写失败，调用方保持原样并留日志）。
+ */
+async function upsertByKey(
+  table: string,
+  row: Record<string, unknown>,
+  keyColumn: string,
+  keyValue: string,
+): Promise<'updated' | 'inserted' | null> {
+  const sb = supabase
+  if (!sb) return null
+  const upd = await sb.from(table).update(row).eq(keyColumn, keyValue).select('id')
+  if (upd.error) {
+    console.warn('[orders] 更新 ' + table + ' 失败', keyValue, upd.error.message)
+    return null
+  }
+  if ((upd.data?.length ?? 0) > 0) return 'updated'
+  const ins = await sb.from(table).insert(row).select('id')
+  if (!ins.error) return 'inserted'
+  if (ins.error.code === '23505') {
+    const retry = await sb.from(table).update(row).eq(keyColumn, keyValue).select('id')
+    if (!retry.error && (retry.data?.length ?? 0) > 0) return 'updated'
+    console.warn('[orders] 重试更新 ' + table + ' 失败', keyValue, retry.error?.message)
+    return null
+  }
+  console.warn('[orders] 写入 ' + table + ' 失败', keyValue, ins.error.message)
+  return null
+}
+/**
  * 把订单写入数据库（存在则更新，不存在则插入），并同步明细行。
  * 失败只记日志：不能让数据库问题把整个下单流程卡死。
  */
@@ -231,25 +273,12 @@ export async function upsertOrder(order: IOrder): Promise<boolean> {
   if (!sb) return false
   try {
     const row = orderToRow(order)
-    // 刻意不用 .upsert()：ON CONFLICT 的冲突分支会改用「更新」策略判定，
-    // 实测在 RLS 下会被拒（同样数据普通 INSERT 通过）。显式「先插、冲突再改」更可靠。
-    const ins = await sb.from('orders').insert(row)
+    // 既不用 .upsert()（ON CONFLICT 的冲突分支会被 RLS 拒），也不用「先 INSERT 遇 23505 再 UPDATE」
+    // ——商家/骑手改单时 INSERT 会先撞 RLS 42501，见 upsertByKey 的注释。
+    const orderWrite = await upsertByKey('orders', row, 'id', order.id)
+    if (!orderWrite) return false
     // 订单行是不是这次新建的：决定明细要不要写（详见下方明细段的注释）
-    const isNewOrder = !ins.error
-    if (ins.error) {
-      if (ins.error.code === '23505') {
-        const upd = await sb.from('orders').update(row).eq('id', order.id)
-        if (!upd.error) {
-          // 继续写明细
-        } else {
-          console.warn('[orders] 更新订单失败', order.id, upd.error.message)
-          return false
-        }
-      } else {
-        console.warn('[orders] 写入订单失败', order.id, ins.error.message)
-        return false
-      }
-    }
+    const isNewOrder = orderWrite === 'inserted'
     // ---- 订单明细 ----
     // ⚠️ 明细在本项目里是「下单快照」，刻意不可改：RLS 只给了 order_items 的 select / insert
     //    两条策略，没有 update / delete；表上也没有 (order_id, sort) 唯一约束。
@@ -308,15 +337,8 @@ export async function upsertOrder(order: IOrder): Promise<boolean> {
         handle_remark: rf.handleRemark ?? null,
         handled_by: rf.handledById && isUuid(rf.handledById) ? rf.handledById : null,
       }
-      const rfIns = await sb.from('refund_requests').insert(rfRow)
-      if (rfIns.error) {
-        if (rfIns.error.code === '23505') {
-          const rfUpd = await sb.from('refund_requests').update(rfRow).eq('order_id', order.id)
-          if (rfUpd.error) console.warn('[orders] 更新售后退款失败', order.id, rfUpd.error.message)
-        } else {
-          console.warn('[orders] 写入售后退款失败', order.id, rfIns.error.message)
-        }
-      }
+      // 商家同意/拒绝退款是「改别人的行」，同样必须 update 优先（见 upsertByKey 注释）
+      await upsertByKey('refund_requests', rfRow, 'order_id', order.id)
     }
     // ---- 第 2 期 2e：配送异常单独写表（id 是 uuid 主键，重复插入按 23505 跳过）----
     if (order.deliveryExceptions?.length) {
@@ -335,10 +357,8 @@ export async function upsertOrder(order: IOrder): Promise<boolean> {
           resolution: ex.resolution ?? null,
           created_at: iso(ex.createdAt),
         }
-        const exIns = await sb.from('delivery_exceptions').insert(exRow)
-        if (exIns.error && exIns.error.code !== '23505') {
-          console.warn('[orders] 写入配送异常失败', ex.id, exIns.error.message)
-        }
+        // 上报人写入 / 店主处理（店主不是 reporter，INSERT 会被 RLS 拒）→ 同样 update 优先
+        await upsertByKey('delivery_exceptions', exRow, 'id', ex.id)
       }
     }
     return true

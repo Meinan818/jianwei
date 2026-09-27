@@ -28,13 +28,27 @@ function newOrderId(): string {
 }
 
 // ========== 订单字段归一化（防御脏数据，避免整页 ErrorBoundary） ==========
+/**
+ * 9 态订单状态机（与数据库 order_status 枚举一一对应）。
+ * ⚠️ 归一化白名单必须与它完全一致：少一个状态，那个状态就会被**悄悄改成 pending**。
+ *    2026-09-28 踩过这个坑——白名单里漏了 rejected（和 pending_payment），
+ *    于是商家拒单后 normalizeOrders 立刻把 rejected 改回 pending：
+ *    表现是「订单还在、仍显示待接单、顾客端什么也看不到」，数据库里只留下一个
+ *    带 reject_reason 却还是 pending 的畸形订单。
+ */
+const ALL_ORDER_STATUSES: readonly string[] = [
+  'pending_payment', 'pending', 'preparing', 'ready', 'picked', 'delivering', 'delivered', 'cancelled', 'rejected',
+]
+
 function normalizeOrder(raw: any): IOrder {
   const o = (raw || {}) as any
   const createdAt = Number(o.createdAt) || Date.now()
-  const status: OrderStatus =
-    (['pending', 'preparing', 'ready', 'picked', 'delivering', 'delivered', 'cancelled'].includes(o.status)
-      ? o.status
-      : 'pending') as OrderStatus
+  const status: OrderStatus = ALL_ORDER_STATUSES.includes(o.status)
+    ? (o.status as OrderStatus)
+    : 'pending'
+  if (!ALL_ORDER_STATUSES.includes(o.status)) {
+    console.warn('[orders] 未知订单状态，按 pending 处理：', o.status)
+  }
 
   // address 归一化：兼容 address 对象 / deliveryAddress 字符串 / 无地址
   let address = { name: '', phone: '', address: '', detail: '' }

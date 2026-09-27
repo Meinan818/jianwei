@@ -24,7 +24,10 @@ import { fileURLToPath } from 'node:url'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const DIST = path.join(ROOT, 'dist', 'client')
-const HARNESS_SRC = path.join(ROOT, 'scripts', 'e2e-smoke.html')
+// 可选：node scripts/e2e-smoke.mjs [其他测试页] [角色] —— 只跑指定页面/角色（用于单点回归，如商家拒单）
+const harnessArg = process.argv[2]
+const roleArg = process.argv[3] || 'customer'
+const HARNESS_SRC = harnessArg ? path.resolve(ROOT, harnessArg) : path.join(ROOT, 'scripts', 'e2e-smoke.html')
 const HARNESS_DST = path.join(DIST, '_e2e-smoke.html')
 const PORT = Number(process.env.SMOKE_PORT || 4329)
 const ROLES = ['customer', 'merchant', 'rider']
@@ -118,12 +121,13 @@ async function main() {
       console.error('✗ 本地预览服务没起来（端口 ' + PORT + ' 被占用？可设 SMOKE_PORT 换端口）')
       process.exit(1)
     }
-    for (const role of ROLES) {
+    const rolesToRun = harnessArg ? [roleArg] : ROLES
+    for (const role of rolesToRun) {
       console.log('──────── ' + ROLE_CN[role] + ' ────────')
       const r = runRole(browser, role)
       console.log(r.text)
       console.log('')
-      if (!r.pass) failed.push(ROLE_CN[role])
+      if (!r.pass) failed.push(ROLE_CN[role] || role)
     }
   } finally {
     try { server.kill() } catch (e) { /* ignore */ }
