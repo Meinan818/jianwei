@@ -14,10 +14,12 @@
 - 「简味点单」是一款**顾客端 + 商家端 + 骑手端**三端联动的外卖 App，对标美团 / 饿了么，包含丰富但克制的动画。
 - 性质：**大学课程 / 个人作品集项目**，不商业化运营。优先级：零成本 > 可演示 > 功能完整。
 - **不接真实支付、不接真实短信、不上架应用商店**——这些功能用 Mock 实现，并在代码与文档中注明"已预留真实接入点"。
-- 阶段路线：
-  1. 前端高保真原型（**已完成**，当前版本 v60）；
-  2. 接入真实后端数据库（**下一步，选型 Supabase**）；
-  3. 前端自行部署到 Cloudflare Pages 上线演示。
+- 阶段路线（2026-09-27 更新）：
+  1. 前端高保真原型（**已完成**，原型版本 v60）；
+  2. 接入真实后端数据库（**已完成主要部分**：账号/店铺/菜品/订单/聊天上云；评价/优惠券/钱包/地址待做）；
+  3. 部署到 Cloudflare Pages 上线演示（**已完成**：https://jianwei-57i.pages.dev/ ）；
+  4. 续做：第 3 期实时推送（Realtime）、第 4 期图片上云（Storage，可选）。
+- **给人看的交接摘要见 `docs/交接说明.md`**（含演示账号、演示脚本、线上资产清单、已知的坑）。
 - 原生套壳 App（Android/iOS 安装包）不是目标，产品形态是**移动端竖屏网页应用**。
 
 ## 2. 技术栈
@@ -39,9 +41,13 @@
 ```bash
 npm install
 npx vite                 # 本地开发，默认 http://localhost:5173
-npx vite build           # 生产构建，产物在 dist/
 npx tsc -p tsconfig.app.json   # 类型检查（必须 0 错误）
+npm run build:standalone # ✅ 对外部署用这个：产物在 dist/client
+npx vite build           # ⚠️ 平台托管构建，产物同样在 dist/client，
+                         #    但含 {{appName}} 占位符/外链统计脚本/妙搭水印，**不可对外部署**
 ```
+
+> 构建产物目录是 **`dist/client`**（不是 `dist/`），Cloudflare Pages 的"输出目录"填这个。
 
 已知平台耦合点（迁移期需要处理）：
 
@@ -125,7 +131,7 @@ rejected         商家拒单（终态）
 9. 界面语言：简体中文。
 10. 每次完成一个阶段：类型检查 0 错误、构建通过，并 git commit 留存。
 
-## 6. 下一步任务：Supabase 迁移 + Cloudflare 部署
+## 6. 后端迁移与部署进展（第 0 / 1 / 2a / 2b / 2c / 5 期已完成，续做第 3、4 期）
 
 ### 已提供的后端资产（在 `supabase/` 与 `docs/`）
 
@@ -206,7 +212,9 @@ rejected         商家拒单（终态）
   - **严禁让 Cloudflare 用 `npm run build`**：那是平台包装脚本，产物含 `{{appName}}` 占位符、外链统计脚本与妙搭水印，对外不可用。对外部署一律 `npm run build:standalone`。
   - `public/_redirects`（`/* /index.html 200`）已加入，实测直接访问 `/customer/orders`、`/merchant/orders` 均返回 200 而非 404。
   - Node 版本由仓库根目录 `.nvmrc`（22.16.0）固定，与 Cloudflare 构建镜像默认版本一致；Vite 8 要求 `^20.19.0 || >=22.12.0`。
-  - 部署后已验证：HTTP 200、标题「简味点单」、无 HBS 占位符、无妙搭水印、无 Slardar/Tea 外链统计脚本、单个 JS chunk、真实浏览器渲染出三端选择器。
+  - 部署后已验证：HTTP 200、标题「饭否外卖」、无 HBS 占位符、无妙搭水印、无 Slardar/Tea 外链统计脚本、单个 JS chunk、真实浏览器渲染出三端选择器。
+  - **环境变量已配置（2026-09-27）**：Cloudflare Pages → Settings → Variables and secrets 已加入
+    `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`（Production），线上已切换为真实认证与真实数据库。
 
 ### Supabase / Cloudflare 事实与注意
 
