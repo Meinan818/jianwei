@@ -1,7 +1,18 @@
-# Supabase 控制台操作清单（约 10 分钟，照着打勾）
+# Supabase 控制台操作清单（照着打勾，约 10 分钟）
 
-> 目标：建好云端数据库，跑完两个 SQL，拿到两个连接参数发我，然后我回妙搭做第 1 期（登录）改造。
+> 目标：建好云端数据库 → 跑完两个 SQL → 关闭邮箱验证 → 把两个连接参数交给 AI，由 AI 做第 1 期（真实登录）。
 > 全程免费；用电脑浏览器操作最方便（手机也能做，但复制 SQL 不方便）。
+> 本清单已按 2026-09 的 Supabase 控制台核对过一遍。
+
+## ⚠️ 先记住：密钥改名了
+
+Supabase 正在废弃旧的 `anon` / `service_role` 密钥，改用新的 `publishable` / `secret`（计划 2026 年底前完成迁移）。
+所以你在控制台里可能看到新旧两套名字，它们指的是同一个位置：
+
+| 新名字 | 旧名字 | 能不能给前端 / 发给 AI |
+|---|---|---|
+| `Publishable key`（`sb_publishable_...`） | `anon` `public` | ✅ 可以，本来就是公开的 |
+| `Secret key`（`sb_secret_...`） | `service_role` | ❌ **绝对不行**，它能绕过所有权限 |
 
 ## ① 注册并创建项目（约 3 分钟）
 
@@ -16,9 +27,9 @@
 ## ② 执行建表脚本（约 3 分钟）
 
 - [ ] 左侧 **SQL Editor** → **New query**
-- [ ] 打开文件 `20260915000000_init_schema.sql`，全文复制粘贴进去 → **Run**
+- [ ] 用 VS Code 打开 `supabase/migrations/20260915000000_init_schema.sql`，`Ctrl+A` 全选、`Ctrl+C` 复制，粘贴进编辑器 → 点 **Run**
   - 成功标志：底部显示 `Success. No rows returned`，没有红色报错
-- [ ] 再 **New query**，打开 `20260915010000_seed_demo.sql` 全文粘贴 → **Run**
+- [ ] 再 **New query**，同样方式跑 `supabase/migrations/20260915010000_seed_demo.sql`
 - [ ] 新建 query 跑下面自检语句，确认数字：
 
 ```sql
@@ -30,37 +41,37 @@ select
   (select count(*) from auth.users) as 演示账号;       -- 应为 3
 ```
 
-## ③ 登录认证设置（约 1 分钟）
+## ③ 关闭邮箱验证（约 1 分钟）
 
-- [ ] 左侧 **Authentication** → **Sign In / Providers**（或 Providers）→ **Email**
+- [ ] 左侧 **Authentication** → **Sign In / Providers** → **Email**
   - 保持 **Enable Email provider** 开启
-  - 把 **Confirm email（邮箱验证）关掉**（演示项目免验证、注册即登录；作品集演示更顺，以后想加验证随时能开）
-  - Save
-- 说明：App 里的「手机验证码 123456」是前端演示 Mock，不接收费短信，这里不需要任何短信配置。
+  - 把 **Confirm email（确认邮件）关掉** → **Save**
+- 官方文档原文：默认情况下用户必须先验证邮箱才能登录，关掉 `Confirm email` 才能让演示账号直接登录。
+- 说明：项目里的「手机验证码 123456」是前端演示 Mock，不接收费短信，这里不需要任何短信配置。
 
-## ④ 检查存储桶与实时通道（约 1 分钟，SQL 已自动配好，只需确认）
+## ④ 确认存储桶与实时通道（约 1 分钟，SQL 已自动配好，只需确认）
 
 - [ ] 左侧 **Storage**：应看到 `avatars`、`dish-images`、`review-images` 三个桶，都是 public
 - [ ] **Database** → **Publications** → `supabase_realtime`：应能看到 orders、messages、notifications、refund_requests、delivery_exceptions 已在列表里（SQL 已加，不用手点）
 
 ## ⑤ 拿两个连接参数发我（约 1 分钟）
 
-- [ ] 左侧 **Project Settings**（齿轮）→ **API**，找到并复制：
+- [ ] 左侧 **Project Settings**（齿轮）→ **API**（新版可能叫 **API Keys**），或直接点项目顶部的 **Connect** 面板
+- [ ] 复制这两个值：
   - **Project URL**（形如 `https://xxxxxxxx.supabase.co`）
-  - **Project API keys → `anon` `public`** 那一长串（不是 service_role！）
-- [ ] 把这两个值直接发给我
+  - **Publishable key**（`sb_publishable_...`）或旧版的 **`anon` `public`** 那一长串
 
-> 安全说明：anon key 设计上就是给前端公开的（打包后任何人都能在浏览器里看到，这是正常的），数据安全全部由 SQL 里的 56 条 RLS 策略保证。
-> **`service_role` / `secret` 开头的密钥绝对不要发我、更不能写进前端**，它能绕过所有权限。
+> 安全说明：publishable / anon key 设计上就是给前端公开的（打包后任何人都能在浏览器里看到，这是正常的），数据安全全部由 SQL 里的 56 条 RLS 策略保证。
+> **`secret` / `service_role` 开头的密钥绝对不要发我、更不能写进前端**，它能绕过所有权限。
 
 ## ⑥ 我拿到参数后的分工
 
-1. 我在妙搭工程里装 supabase-js、写 client 初始化，做**第 1 期：真实登录注册**（邮箱密码真实、演示码 123456 保留为 Mock、三端账号独立），改完发新版并按老规矩留存 commit 基线 + 台账；
-2. 之后按设计稿的 6 期推进：店铺菜品上云 → 订单三端联动 → IM/评价 → 资金收尾；
-3. 每期你都能在演示 App 里用三个演示账号体验（密码均为 `123456`）：
-   - 演示顾客 `demo-customer@jianwei.app`
-   - 演示商家 `demo-merchant@jianwei.app`（自带「演示小店」）
-   - 演示骑手 `demo-rider@jianwei.app`
+1. 在本地工程安装 `@supabase/supabase-js`，新建 client 读环境变量 `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`，把 `useAuth` 的模拟登录换成**真实邮箱密码认证**（短信验证码继续保留前端 Mock `123456`，并注明真实短信接入点），三端账号角色与 `profiles` 表对齐；
+2. 之后按设计稿推进：店铺菜品上云 → 订单三端联动 → IM/评价 → 资金收尾；
+3. 每期改完照旧：类型检查 0 错误 + 构建通过 → commit → push → Cloudflare 自动重新部署。
+
+> ⚠️ 部署前记得在 Cloudflare 的 **Settings → Environment variables** 里补上
+> `VITE_SUPABASE_URL` 与 `VITE_SUPABASE_ANON_KEY`，否则线上版本连不上数据库。
 
 ## 常见疑问
 

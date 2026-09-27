@@ -9,7 +9,7 @@
 export const APP_BRAND = '饭否外卖'
 
 /** 原型迭代版次：每完成一次改动 +1 */
-export const APP_EDITION = 3
+export const APP_EDITION = 4
 
 /** 三端设置页展示的版本号 */
 export const APP_VERSION = `v${APP_EDITION}.0.0`
