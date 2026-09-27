@@ -10,8 +10,8 @@
 /** 对用户展示的品牌名（项目/仓库代号仍是「简味点单 / jianwei」） */
 export const APP_BRAND = '饭否外卖'
 
-/** 原型迭代版次：每完成一次迭代 +1（当前对应「品牌统一为饭否外卖」那次迭代） */
-export const APP_EDITION = 3
+/** 原型迭代版次：每完成一次迭代 +1（当前对应「第 1 期：接入 Supabase 真实登录」） */
+export const APP_EDITION = 4
 
 /** 三端设置页展示的版本号 */
 export const APP_VERSION = `v${APP_EDITION}.0.0`
