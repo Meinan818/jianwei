@@ -105,49 +105,55 @@ export default function LoginPage() {
   }
 
   // 验证码登录
-   const handleCodeLogin = () => {
-     if (!agreed) { toast.info('请先阅读并同意用户协议和隐私政策'); return }
-     if (!validatePhone()) return
-     if (code !== SIMULATED_CODE) { toast.info('验证码错误'); return }
-     setSubmitting(true)
-     const result = loginWithCode(phone, role)
-     setSubmitting(false)
-     if (result.success && result.user) {
-       toast.success('登录成功')
-       // 商家账号且无店铺 → 先去建店向导
-       if (result.user.role === 'merchant' && !result.user.shopId) {
-         navigate('/merchant/create-shop', { replace: true })
-       } else {
-         navigate(getRoleHomePath(result.user.role), { replace: true })
-       }
-     } else {
-       toast.info(result.message || '登录失败')
-     }
-   }
+  const handleCodeLogin = async () => {
+    if (!agreed) { toast.info('请先阅读并同意用户协议和隐私政策'); return }
+    if (!validatePhone()) return
+    if (code !== SIMULATED_CODE) { toast.info('验证码错误'); return }
+    setSubmitting(true)
+    try {
+      const result = await loginWithCode(phone, role)
+      if (result.success && result.user) {
+        toast.success('登录成功')
+        // 商家账号且无店铺 → 先去建店向导
+        if (result.user.role === 'merchant' && !result.user.shopId) {
+          navigate('/merchant/create-shop', { replace: true })
+        } else {
+          navigate(getRoleHomePath(result.user.role), { replace: true })
+        }
+      } else {
+        toast.info(result.message || '登录失败')
+      }
+    } finally {
+      setSubmitting(false)
+    }
+  }
 
   // 密码登录
-  const handlePasswordLogin = () => {
+  const handlePasswordLogin = async () => {
     if (!agreed) { toast.info('请先阅读并同意用户协议和隐私政策'); return }
     if (!validatePhone()) return
     if (!password) { toast.info('请输入密码'); return }
     setSubmitting(true)
-    const result = loginWithPassword(phone, password, role)
-    setSubmitting(false)
-    if (result.success && result.user) {
-      toast.success('登录成功')
-      // 商家账号且无店铺 → 先去建店向导
-      if (result.user.role === 'merchant' && !result.user.shopId) {
-        navigate('/merchant/create-shop', { replace: true })
+    try {
+      const result = await loginWithPassword(phone, password, role)
+      if (result.success && result.user) {
+        toast.success('登录成功')
+        // 商家账号且无店铺 → 先去建店向导
+        if (result.user.role === 'merchant' && !result.user.shopId) {
+          navigate('/merchant/create-shop', { replace: true })
+        } else {
+          navigate(getRoleHomePath(result.user.role), { replace: true })
+        }
       } else {
-        navigate(getRoleHomePath(result.user.role), { replace: true })
+        toast.info(result.message || '登录失败')
       }
-    } else {
-      toast.info(result.message || '登录失败')
+    } finally {
+      setSubmitting(false)
     }
   }
 
   // 注册
-  const handleRegister = () => {
+  const handleRegister = async () => {
     if (!agreed) { toast.info('请先阅读并同意用户协议和隐私政策'); return }
     if (!validatePhone()) return
     if (!nickname.trim()) { toast.info('请输入昵称'); return }
@@ -156,56 +162,67 @@ export default function LoginPage() {
     if (password !== password2) { toast.info('两次输入的密码不一致'); return }
     if (isPhoneRegistered(phone, role)) { toast.info('该手机号已注册，请直接登录'); return }
     setSubmitting(true)
-    const result = register(phone, password, nickname, role)
-    setSubmitting(false)
-    if (result.success && result.user) {
-      toast.success('注册成功，已自动登录')
-      // 商家账号 → 去建店向导（一账号一店铺）
-      if (result.user.role === 'merchant') {
-        navigate('/merchant/create-shop', { replace: true })
+    try {
+      const result = await register(phone, password, nickname, role)
+      if (result.success && result.user) {
+        toast.success('注册成功，已自动登录')
+        // 商家账号 → 去建店向导（一账号一店铺）
+        if (result.user.role === 'merchant') {
+          navigate('/merchant/create-shop', { replace: true })
+        } else {
+          navigate(getRoleHomePath(result.user.role), { replace: true })
+        }
       } else {
-        navigate(getRoleHomePath(result.user.role), { replace: true })
+        toast.info(result.message || '注册失败')
       }
-    } else {
-      toast.info(result.message || '注册失败')
+    } finally {
+      setSubmitting(false)
     }
   }
 
   // 重置密码
-  const handleResetPwd = () => {
+  const handleResetPwd = async () => {
     if (!validatePhone()) return
     if (code !== SIMULATED_CODE) { toast.info('验证码错误'); return }
     if (password.length < 6) { toast.info('新密码至少6位'); return }
     if (password !== password2) { toast.info('两次输入的密码不一致'); return }
     setSubmitting(true)
-    const result = resetPassword(phone, password, role)
-    setSubmitting(false)
-    if (result.success) {
-      toast.success('密码重置成功，请用新密码登录')
-      switchMode('login')
-      setLoginTab('password')
-    } else {
-      toast.info(result.message || '重置失败')
+    try {
+      const result = await resetPassword(phone, password, role)
+      if (result.success) {
+        toast.success('密码重置成功，请用新密码登录')
+        switchMode('login')
+        setLoginTab('password')
+      } else {
+        toast.info(result.message || '重置失败')
+      }
+    } finally {
+      setSubmitting(false)
     }
   }
 
   // 主按钮动作
   const handleMainAction = () => {
     if (pageMode === 'login') {
-      if (loginTab === 'code') handleCodeLogin()
-      else handlePasswordLogin()
+      if (loginTab === 'code') void handleCodeLogin()
+      else void handlePasswordLogin()
     } else if (pageMode === 'register') {
-      handleRegister()
+      void handleRegister()
     } else {
-      handleResetPwd()
+      void handleResetPwd()
     }
   }
 
   // 一键体验
-  const handleQuickLogin = () => {
-    const user = quickLogin(role)
-    toast.success(`已以${meta.endName}体验账号登录`)
-    navigate(getRoleHomePath(user.role), { replace: true })
+  const handleQuickLogin = async () => {
+    setSubmitting(true)
+    try {
+      const demoUser = await quickLogin(role)
+      toast.success(`已以${meta.endName}体验账号登录`)
+      navigate(getRoleHomePath(demoUser.role), { replace: true })
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   const handleBack = () => {

@@ -2,6 +2,7 @@ import React, { useState, useCallback, createContext, useContext, useEffect } fr
 import { scopedStorage, avatarImages } from '@lark-apaas/client-toolkit-lite'
 import type { IAuthUser, UserRole, IRegisteredAccount } from '@/data/auth'
 import { SIMULATED_CODE, ACCOUNTS_KEY_PREFIX } from '@/data/auth'
+import { supabase, supabaseEnabled, phoneToAuthEmail, authEmailToPhone } from '@/lib/supabase'
 
 const AUTH_KEY = 'food_delivery_auth'
 const PROFILE_KEY_PREFIX = 'food_delivery_profile_' // + role，按角色独立存昵称/头像
@@ -100,14 +101,16 @@ interface AuthContextValue {
   user: IAuthUser
   isLoggedIn: boolean
 
+  // 以下五个方法都可能走网络（Supabase Auth），因此是异步的；
+  // 未配置环境变量时走本地模拟登录，同样返回 Promise，调用方写法统一。
   // 验证码登录
-  loginWithCode: (phone: string, role: UserRole) => { success: boolean; user?: IAuthUser; message?: string }
+  loginWithCode: (phone: string, role: UserRole) => Promise<{ success: boolean; user?: IAuthUser; message?: string }>
   // 密码登录
-  loginWithPassword: (phone: string, password: string, role: UserRole) => { success: boolean; user?: IAuthUser; message?: string }
+  loginWithPassword: (phone: string, password: string, role: UserRole) => Promise<{ success: boolean; user?: IAuthUser; message?: string }>
   // 注册
-  register: (phone: string, password: string, nickname: string, role: UserRole) => { success: boolean; user?: IAuthUser; message?: string }
+  register: (phone: string, password: string, nickname: string, role: UserRole) => Promise<{ success: boolean; user?: IAuthUser; message?: string }>
   // 重置密码
-  resetPassword: (phone: string, newPassword: string, role: UserRole) => { success: boolean; message?: string }
+  resetPassword: (phone: string, newPassword: string, role: UserRole) => Promise<{ success: boolean; message?: string }>
   // 检查是否已注册（有密码）
   isPhoneRegistered: (phone: string, role: UserRole) => boolean
   // 检查商家账号是否已有店铺
@@ -115,7 +118,7 @@ interface AuthContextValue {
   // 商家账号绑定店铺（一账号一店铺）
   bindShop: (shopId: string, shopName: string) => void
   // 一键体验
-  quickLogin: (role: UserRole) => IAuthUser
+  quickLogin: (role: UserRole) => Promise<IAuthUser>
   // 退出
   logout: () => void
   // 更新资料
@@ -163,9 +166,121 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
+  // —— Supabase 会话 → 应用内用户 ——
+  // 资料以 profiles 表为准（昵称/头像/工号），商家再查一次自己的店铺（一账号一店铺）。
+  const buildUserFromSession = useCallback(async (
+    userId: string,
+    email: string | undefined,
+    meta: Record<string, unknown>,
+    fallbackRole?: UserRole,
+  ): Promise<IAuthUser | null> => {
+    const role = (meta?.role as UserRole) ?? fallbackRole
+    if (!role) return null
+
+    const phone = (meta?.phone as string) || authEmailToPhone(email)
+    let nickname = (meta?.nickname as string) || `用户${phone.slice(-4)}`
+    let avatar = (meta?.avatar_url as string) || getDefaultAvatar(role)
+    let riderId: string | undefined
+    let shopId: string | undefined
+    let shopName: string | undefined
+
+    if (supabase) {
+      try {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('nickname,avatar_url,rider_no')
+          .eq('id', userId)
+          .maybeSingle()
+        if (profile) {
+          if (profile.nickname) nickname = profile.nickname
+          if (profile.avatar_url) avatar = profile.avatar_url
+          if (profile.rider_no) riderId = profile.rider_no
+        }
+        if (role === 'merchant') {
+          const { data: shop } = await supabase
+            .from('shops')
+            .select('id,name')
+            .eq('owner_id', userId)
+            .maybeSingle()
+          if (shop) {
+            shopId = shop.id
+            shopName = shop.name
+          }
+        }
+      } catch (err) {
+        console.warn('[auth] 读取 profiles/shops 失败，改用登录元数据', err)
+      }
+    }
+
+    // 骑手工号兜底：与本地模拟登录保持一致的生成规则
+    if (role === 'rider' && !riderId && phone) riderId = 'R' + phone.slice(-4)
+
+    return { id: userId, role, phone, nickname, avatar, shopId, shopName, riderId, loggedIn: true }
+  }, [])
+
+  // —— 演示账号手机号（一键体验 / 验证码登录用；密码均为 123456）——
+  const DEMO_PHONE: Record<UserRole, string> = {
+    customer: '13800000001',
+    merchant: '13800000002',
+    rider: '13800000003',
+  }
+
+  // —— Supabase 会话恢复：刷新页面后保持登录；会话失效则回到未登录 ——
+  // 未配置 Supabase 时不执行，本地模拟登录的行为完全不变。
+  // 位置必须放在 saveUser / buildUserFromSession 声明之后。
+  useEffect(() => {
+    if (!supabase) return
+    let cancelled = false
+    void (async () => {
+      const { data } = await supabase.auth.getSession()
+      if (cancelled) return
+      const su = data.session?.user
+      if (!su) {
+        saveUser(GUEST_USER)
+        return
+      }
+      const built = await buildUserFromSession(su.id, su.email, su.user_metadata ?? {})
+      if (!cancelled && built) saveUser(built)
+    })()
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      // 只在会话消失时兜底；建立会话由各登录方法负责，避免重复覆盖刚写入的 shopId 等信息
+      if (!session) saveUser(GUEST_USER)
+    })
+    return () => {
+      cancelled = true
+      sub.subscription.unsubscribe()
+    }
+  }, [saveUser, buildUserFromSession])
+
   // —— 验证码登录 ——
-  const loginWithCode = useCallback((phone: string, role: UserRole) => {
+  // 短信验证码是前端演示 Mock（固定 SIMULATED_CODE = 123456），真实短信接入点见 LoginPage 的「发送验证码」。
+  // 接上 Supabase 后：验证码校验仍在本地完成，通过后用演示密码换取真实会话，
+  // 因此该入口只对演示账号有效（三个演示账号密码统一为 123456）。
+  const loginWithCode = useCallback(async (phone: string, role: UserRole) => {
     if (!/^1\d{10}$/.test(phone)) return { success: false, message: '请输入正确的手机号' }
+
+    if (supabase) {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: phoneToAuthEmail(phone),
+        password: SIMULATED_CODE,
+      })
+      if (error || !data.user) {
+        return {
+          success: false,
+          message: '验证码登录仅支持演示账号（13800000001 / 13800000002 / 13800000003），其他账号请用密码登录',
+        }
+      }
+      const built = await buildUserFromSession(data.user.id, data.user.email, data.user.user_metadata ?? {}, role)
+      if (!built) return { success: false, message: '该账号资料不完整，请用密码登录' }
+      if (built.role !== role) {
+        await supabase.auth.signOut()
+        return { success: false, message: '该账号不属于当前端，请回到启动页选择正确的身份' }
+      }
+      saveUser(built)
+      return { success: true, user: built }
+    }
+
+    // —— 以下为未配置 Supabase 时的本地模拟登录（原逻辑，保持不变）——
     const accounts = readAccounts(role)
     const existing = accounts.find(a => a.phone === phone)
 
@@ -211,13 +326,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     saveUser(newUser)
     return { success: true, user: newUser }
-  }, [saveUser])
+  }, [saveUser, buildUserFromSession])
 
   // —— 密码登录 ——
-  const loginWithPassword = useCallback((phone: string, password: string, role: UserRole) => {
+  const loginWithPassword = useCallback(async (phone: string, password: string, role: UserRole) => {
     if (!/^1\d{10}$/.test(phone)) return { success: false, message: '请输入正确的手机号' }
     if (!password) return { success: false, message: '请输入密码' }
 
+    if (supabase) {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: phoneToAuthEmail(phone),
+        password,
+      })
+      if (error || !data.user) {
+        // Supabase 不区分「账号不存在」和「密码错误」是出于防账号枚举的考虑，这里保持一致
+        return { success: false, message: '手机号或密码不正确' }
+      }
+      const built = await buildUserFromSession(data.user.id, data.user.email, data.user.user_metadata ?? {}, role)
+      if (!built) return { success: false, message: '该账号资料不完整，请联系管理员' }
+      if (built.role !== role) {
+        // 三端账号独立：顾客账号不能登商家端，反之亦然（硬约束 §4.1）
+        await supabase.auth.signOut()
+        return { success: false, message: '该账号不属于当前端，请回到启动页选择正确的身份' }
+      }
+      saveUser(built)
+      return { success: true, user: built }
+    }
+
+    // —— 未配置 Supabase：本地模拟登录（原逻辑）——
     const accounts = readAccounts(role)
     const existing = accounts.find(a => a.phone === phone)
 
@@ -238,14 +374,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } as IAuthUser
     saveUser(newUser)
     return { success: true, user: newUser }
-  }, [saveUser])
+  }, [saveUser, buildUserFromSession])
 
   // —— 注册 ——
-  const register = useCallback((phone: string, password: string, nickname: string, role: UserRole) => {
+  const register = useCallback(async (phone: string, password: string, nickname: string, role: UserRole) => {
     if (!/^1\d{10}$/.test(phone)) return { success: false, message: '请输入正确的手机号' }
     if (!password || password.length < 6) return { success: false, message: '密码至少6位' }
     if (!nickname.trim()) return { success: false, message: '请输入昵称' }
 
+    if (supabase) {
+      // role/nickname/phone 通过注册元数据传给数据库触发器 handle_new_user，
+      // 由它自动建立 profiles 行（角色即由此带入）
+      const { data, error } = await supabase.auth.signUp({
+        email: phoneToAuthEmail(phone),
+        password,
+        options: { data: { role, nickname: nickname.trim(), phone } },
+      })
+      if (error) return { success: false, message: error.message || '注册失败，请稍后重试' }
+      // Supabase 为防账号枚举，对已存在的邮箱会返回「成功但 identities 为空」的假象
+      if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+        return { success: false, message: '该手机号已注册，请直接登录' }
+      }
+      if (!data.user) return { success: false, message: '注册失败，请稍后重试' }
+      const built = await buildUserFromSession(data.user.id, data.user.email, data.user.user_metadata ?? {}, role)
+      if (!built) return { success: false, message: '注册成功但资料读取失败，请重新登录' }
+      saveUser(built)
+      return { success: true, user: built }
+    }
+
+    // —— 未配置 Supabase：本地模拟注册（原逻辑）——
     const accounts = readAccounts(role)
     const existing = accounts.find(a => a.phone === phone)
 
@@ -288,13 +445,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     saveUser(newUser)
     return { success: true, user: newUser }
-  }, [saveUser])
+  }, [saveUser, buildUserFromSession])
 
   // —— 重置密码 ——
-  const resetPassword = useCallback((phone: string, newPassword: string, role: UserRole) => {
+  const resetPassword = useCallback(async (phone: string, newPassword: string, role: UserRole) => {
     if (!/^1\d{10}$/.test(phone)) return { success: false, message: '请输入正确的手机号' }
     if (!newPassword || newPassword.length < 6) return { success: false, message: '新密码至少6位' }
 
+    if (supabase) {
+      // Supabase 改密码需要「先有会话」——只允许当前已登录账号改自己的密码。
+      // 演示环境没有真实短信/邮件通道，因此找回密码对他人账号不可用（已在界面注明）。
+      const { data: sessionData } = await supabase.auth.getSession()
+      const current = sessionData.session?.user
+      if (!current) {
+        return { success: false, message: '演示环境请先登录后再修改密码（无真实短信通道）' }
+      }
+      if (authEmailToPhone(current.email) !== phone) {
+        return { success: false, message: '只能修改当前登录账号的密码，请先用该账号登录' }
+      }
+      const { error } = await supabase.auth.updateUser({ password: newPassword })
+      if (error) return { success: false, message: error.message || '重置失败，请稍后重试' }
+      return { success: true, message: '密码重置成功' }
+    }
+
+    // —— 未配置 Supabase：本地模拟重置（原逻辑）——
     const accounts = readAccounts(role)
     const idx = accounts.findIndex(a => a.phone === phone)
     if (idx < 0) return { success: false, message: '该手机号尚未注册' }
@@ -340,7 +514,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [user])
 
   // —— 一键体验 ——
-  const quickLogin = useCallback((role: UserRole): IAuthUser => {
+  // 接上 Supabase 后，「一键体验」= 用该端演示账号真实登录（密码 123456）；
+  // 演示账号不可用时（例如数据库还没跑 seed）退回本地演示身份，保证界面能走通。
+  const quickLogin = useCallback(async (role: UserRole): Promise<IAuthUser> => {
+    if (supabase) {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: phoneToAuthEmail(DEMO_PHONE[role]),
+        password: SIMULATED_CODE,
+      })
+      if (!error && data.user) {
+        const built = await buildUserFromSession(data.user.id, data.user.email, data.user.user_metadata ?? {}, role)
+        if (built) {
+          saveUser(built)
+          return built
+        }
+      } else {
+        console.warn('[auth] 演示账号登录失败，退回本地演示身份', error)
+      }
+    }
     const base = DEMO_ACCOUNTS[role]
     const profile = readRoleProfile(role)
     const newUser: IAuthUser = {
@@ -350,11 +541,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     saveUser(newUser)
     return newUser
-  }, [saveUser])
+  }, [saveUser, buildUserFromSession])
 
   // —— 退出登录 ——
   const logout = useCallback(() => {
     saveUser(GUEST_USER)
+    // 同时清掉 Supabase 会话，避免出现「界面已退出但会话还在」
+    if (supabase) void supabase.auth.signOut()
   }, [saveUser])
 
   // —— 更新资料 ——
@@ -383,7 +576,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       return updated
     })
-  }, [])
+
+    // 同步到 Supabase（第 1 期只同步昵称与头像；头像是 base64，第 4 期再迁到 Storage）
+    if (supabase && /^[0-9a-f-]{36}$/i.test(user.id)) {
+      const patch: { nickname?: string; avatar_url?: string } = {}
+      if (updates.nickname !== undefined) patch.nickname = updates.nickname
+      if (updates.avatar !== undefined) patch.avatar_url = updates.avatar
+      if (Object.keys(patch).length > 0) {
+        void supabase
+          .from('profiles')
+          .update(patch)
+          .eq('id', user.id)
+          .then(({ error }) => {
+            if (error) console.warn('[auth] 资料同步到 Supabase 失败', error)
+          })
+      }
+    }
+  }, [user.id])
 
   const value: AuthContextValue = {
     user,

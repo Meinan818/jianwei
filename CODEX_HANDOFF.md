@@ -145,7 +145,21 @@ rejected         商家拒单（终态）
 ### 迁移分期（建议严格按期推进，每期都要 tsc 0 + build 过 + git commit）
 
 - **第 0 期（人工，在 Supabase 控制台）**：注册 Supabase → 新建项目，**区域选 Singapore（新加坡）或 Tokyo（东京），区域创建后不可更改** → SQL Editor 依次跑 init、seed 两个 migration → Auth 设置里关闭 "Confirm email"（否则演示账号无法直接登录）→ 拿到 Project URL 和 anon public key（注意：anon key 设计上就是公开的，安全完全靠 RLS；**service_role key 严禁放进前端**）。
-- **第 1 期（Auth）**：安装 `@supabase/supabase-js`；新建 client，读环境变量 `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`；用 Supabase Auth 替换 `useAuth` 的模拟登录；三端账号角色与 profiles 表对齐。
+- **第 1 期（Auth）**：✅ **已完成（2026-09-27）**
+  - 新增 `src/lib/supabase.ts`：创建 client、读取环境变量、提供手机号↔合成邮箱映射；
+    **两个环境变量缺失时 `supabase` 为 null，`useAuth` 自动退回原来的本地模拟登录**，站点不会白屏。
+  - `useAuth` 的五个方法（验证码登录 / 密码登录 / 注册 / 重置密码 / 一键体验）改为**异步**并接上真实认证；
+    每次登录都会校验账号角色与当前端是否一致，不一致立即 `signOut`（三端独立硬约束）。
+  - 登录成功后从 `profiles` 读昵称/头像/工号，商家再读自己的 `shops` 行（一账号一店铺）；
+    刷新页面通过 `getSession()` 恢复登录态；`logout` 同时清理 Supabase 会话。
+  - 「一键体验」= 用该端演示账号（13800000001/2/3，密码 123456）真实登录；
+    「验证码登录」的前端 Mock 保留，通过后用演示密码换取真实会话，因此只对演示账号有效（界面已提示）。
+  - 「重置密码」受限于 Supabase 需先有会话：只允许当前登录账号改自己的密码（界面已注明无真实短信通道）。
+  - `updateProfile` 会把昵称与头像同步到 `profiles` 表（头像暂存 base64，第 4 期迁到 Storage）。
+  - 登录页的五个调用点已改为 `await` 并加 `try/finally`，避免请求期间重复提交。
+  - **线上必须先配环境变量**：Cloudflare Pages → Settings → Environment variables 添加
+    `VITE_SUPABASE_URL` 与 `VITE_SUPABASE_ANON_KEY`（publishable/anon，**不要填 secret/service_role**），
+    首页右上角 Environment variables 面板加入后需要重新部署一次才生效。未配置时线上会以本地模拟登录运行。
   - **登录标识（2026-09-27 用户拍板，方案 A）**：登录页**保持手机号**不变（现为 11 位正则校验，验证码/密码/注册/找回四条路都基于手机号），
     程序内部把手机号映射成合成邮箱 `phone{手机号}@jianwei.app` 去调 Supabase Auth，用户无感知。
     Supabase Auth 需要真实邮箱，但**不发任何邮件**（演示环境已关闭 Confirm email）。
