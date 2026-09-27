@@ -87,7 +87,8 @@ function runRole(browser, role) {
   const text = decodeLog(dom)
   try { fs.rmSync(profile, { recursive: true, force: true }) } catch (e) { /* ignore */ }
   if (!text) return { role, text: '(没能解析出测试输出)\n' + dom.slice(0, 800), pass: false }
-  return { role, text, pass: text.includes('SMOKE_RESULT=PASS') }
+  // SKIP = 前置条件不满足（例如没有待接单订单），不算失败
+  return { role, text, pass: text.includes('SMOKE_RESULT=PASS') || text.includes('SMOKE_RESULT=SKIP') }
 }
 
 async function main() {

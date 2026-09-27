@@ -25,7 +25,10 @@ const STATUS_MAP: Record<string, string[]> = {
   preparing: ['preparing'],
   ready: ['ready'],
   delivering: ['picked', 'delivering'],
-  done: ['delivered'],
+  // 2026-09-28 修复：以前这里只有 delivered，于是商家拒单 / 顾客取消之后，
+  // 订单会从一个标签里消失、又不出现在任何别的标签（既不在「待接单」也不在「已完成」），
+  // 看起来就像订单凭空不见了。现在归到「已完成」标签里，并显示原因。
+  done: ['delivered', 'rejected', 'cancelled'],
 }
 
 export default function MerchantOrdersPage() {
@@ -321,6 +324,8 @@ export default function MerchantOrdersPage() {
                         {order.status === 'picked' && '骑手已取餐'}
                         {order.status === 'delivering' && '配送中'}
                         {order.status === 'delivered' && '已完成'}
+                        {order.status === 'rejected' && ('已拒单' + (order.rejectReason ? ' · ' + order.rejectReason : ''))}
+                        {order.status === 'cancelled' && ('已取消' + (order.cancelReason ? ' · ' + order.cancelReason : ''))}
                       </span>
                       <span className="text-xs text-muted-foreground">
                         {formatOrderTime(order.createdAt)}
