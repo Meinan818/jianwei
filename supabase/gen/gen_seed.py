@@ -127,11 +127,25 @@ def main():
         user_meta = f'{{"role":"{role}","nickname":"{nick}","phone":"{phone}"}}'
         ident = f'{{"sub":"{uid_}","email":"{email}"}}'
         w(f"""-- 演示账号 {phone}
-insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,raw_app_meta_data,raw_user_meta_data)
-values ('00000000-0000-0000-0000-000000000000',{q(uid_)}::uuid,'authenticated','authenticated',{q(email)},crypt('123456',gen_salt('bf')),now(),now(),now(),{q(app_meta)}::jsonb,{q(user_meta)}::jsonb)
+-- ⚠️ confirmation_token / email_change / email_change_token_new / recovery_token 必须显式写空字符串。
+--    这几列在 Supabase 的 auth.users 里「可为空但没有默认值」，省略即 null；
+--    而认证服务按非空字符串解析它们，遇到 null 会直接抛
+--    "Database error querying schema"（实测：错误密码也报 500，说明是读取阶段就崩了）。
+insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,
+                        confirmation_token,email_change,email_change_token_new,recovery_token,
+                        raw_app_meta_data,raw_user_meta_data)
+values ('00000000-0000-0000-0000-000000000000',{q(uid_)}::uuid,'authenticated','authenticated',{q(email)},crypt('123456',gen_salt('bf')),now(),now(),now(),'','','','',{q(app_meta)}::jsonb,{q(user_meta)}::jsonb)
 on conflict (id) do nothing;
 -- 幂等修正：早期版本用过「纯数字本地部分」的邮箱，Supabase 不接受，这里统一纠正
-update auth.users set email = {q(email)}, raw_user_meta_data = {q(user_meta)}::jsonb where id = {q(uid_)}::uuid;
+update auth.users
+   set email = {q(email)},
+       raw_user_meta_data = {q(user_meta)}::jsonb,
+       -- 同时补齐上面那四个 token 列，修复早期插入留下的 null
+       confirmation_token      = coalesce(confirmation_token, ''),
+       email_change            = coalesce(email_change, ''),
+       email_change_token_new  = coalesce(email_change_token_new, ''),
+       recovery_token          = coalesce(recovery_token, '')
+ where id = {q(uid_)}::uuid;
 -- 身份行必须「先删后插」：provider_id 上有唯一约束，
 -- 若先插入新行再把旧行改成同一 provider_id，会撞 identities_provider_id_provider_unique。
 delete from auth.identities where user_id = {q(uid_)}::uuid;

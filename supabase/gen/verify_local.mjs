@@ -49,7 +49,14 @@ create table auth.users (
   created_at         timestamptz default now(),
   updated_at         timestamptz default now(),
   raw_app_meta_data  jsonb,
-  raw_user_meta_data jsonb
+  raw_user_meta_data jsonb,
+  -- 与真实 Supabase 一致：这几列「可为空但没有默认值」，
+  -- 省略不写就是 null，而认证服务按非空字符串解析它们 → 登录报
+  -- "Database error querying schema"（曾经真实踩过，见下方断言）。
+  confirmation_token      text,
+  email_change            text,
+  email_change_token_new  text,
+  recovery_token          text
 );
 
 create table auth.identities (
@@ -222,6 +229,34 @@ if (initOk) {
     console.log(r.rows[0]);
   } catch (e) {
     console.log('❌ 冒烟测试失败：' + e.message);
+  }
+
+  // ── 7. 断言：演示账号的 token 列不能为 null ─────────────────────────────
+  //    真机踩过的坑：手工插入 auth.users 时省略这几列 → null →
+  //    Supabase 认证服务读取该行时崩溃，登录返回
+  //    500 "Database error querying schema"（连错误密码都报 500）。
+  //    由于本地没有 GoTrue，无法端到端复现，只能在此断言「不能为 null」。
+  console.log('\n── 7. 断言：演示账号的 token 列必须为空字符串而非 null ──');
+  try {
+    const r = await db.query(`
+      select email,
+             (confirmation_token     is null) as t_confirmation,
+             (email_change           is null) as t_email_change,
+             (email_change_token_new is null) as t_email_change_new,
+             (recovery_token         is null) as t_recovery
+        from auth.users
+       where email like 'phone%'
+       order by email
+    `);
+    const bad = r.rows.filter(x => x.t_confirmation || x.t_email_change || x.t_email_change_new || x.t_recovery);
+    if (bad.length > 0) {
+      console.log('❌ 有演示账号的 token 列为 null（会导致线上登录 500）：');
+      console.log(bad);
+    } else {
+      console.log(`✅ ${r.rows.length} 个演示账号的四个 token 列均为空字符串`);
+    }
+  } catch (e) {
+    console.log('断言查询失败：' + e.message);
   }
 }
 
