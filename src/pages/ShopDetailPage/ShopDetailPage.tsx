@@ -157,8 +157,12 @@ export default function ShopDetailPage() {
   }, [shop, shopOpen, addItem])
 
   const handleDecrease = useCallback((dishId: string) => {
-    decreaseItem(dishId)
-  }, [decreaseItem])
+    // 2026-09-28 修复：菜单上的减号是"按菜品"显示的（数量 = 该菜各规格之和），
+    // 但购物车是按 skuKey（菜品 + 规格 + 加料）存的，直接把 dishId 当 key 传进去
+    // 永远匹配不到 → 点减号数量不变。这里先按 dishId 找到购物车里对应的那条明细再减。
+    const line = [...cart.items].reverse().find(i => i.dishId === dishId || i.skuKey === dishId)
+    if (line) decreaseItem(line.skuKey)
+  }, [cart.items, decreaseItem])
 
   const scrollToCategory = (catId: string) => {
     setActiveCategoryId(catId)

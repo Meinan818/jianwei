@@ -1,0 +1,128 @@
+<!doctype html>
+<!--
+  购物车加减号回归测试（2026-09-28 的 bug：点减号数量不变）
+
+  根因：菜单上的减号按"菜品"显示数量，但购物车按 skuKey（菜品+规格+加料）存，
+  handleDecrease 直接把 dishId 传进去，永远匹配不到 → 数量不变。
+  用法：node scripts/e2e-smoke.mjs scripts/e2e-cart.html customer
+-->
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>E2E 购物车加减号</title></head>
+<body style="font:12px/1.5 monospace">
+<pre id="log">[start]</pre>
+<iframe id="app" src="/" style="width:420px;height:820px;border:1px solid #ccc"></iframe>
+<script>
+const out = document.getElementById('log')
+const log = (m) => { out.textContent += '\n' + m }
+const sleep = (ms) => new Promise(r => setTimeout(r, ms))
+const app = document.getElementById('app')
+const doc = () => app.contentDocument
+const win = () => app.contentWindow
+const SHOP_ID = '00000000-0000-4000-8000-000000000099'
+const DISH_NAME = '香辣鸡腿饭'
+let pass = false
+
+async function waitFor(fn, timeout = 25000, label = '') {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeout) {
+    try { const r = fn(); if (r) return r } catch (e) { /* not ready */ }
+    await sleep(200)
+  }
+  throw new Error('等待超时: ' + label)
+}
+const btn = (text) =>
+  [...doc().querySelectorAll('button,a')].find(e => e.textContent.trim().includes(text))
+const iconIn = (el, name) =>
+  [...el.querySelectorAll('button')].find(b => (b.innerHTML || '').includes('lucide-' + name))
+function setInput(el, value) {
+  const w = win()
+  const setter = Object.getOwnPropertyDescriptor(w.HTMLInputElement.prototype, 'value').set
+  setter.call(el, value)
+  el.dispatchEvent(new w.Event('input', { bubbles: true }))
+}
+function readCart() {
+  const store = win().localStorage
+  for (let i = 0; i < store.length; i++) {
+    const k = store.key(i)
+    if (k && k.indexOf('food_delivery_cart') >= 0) {
+      try { const c = JSON.parse(store.getItem(k)); if (c && Array.isArray(c.items)) return c } catch (e) { /* ignore */ }
+    }
+  }
+  return { items: [] }
+}
+function qtyOf(dishId) {
+  return readCart().items.filter(i => !dishId || i.dishId === dishId).reduce((s, i) => s + (i.quantity || 0), 0)
+}
+/** 找到包含某道菜名、且里面有加号按钮的那张卡片（取文本最靠内的元素再往上找） */
+function cardOfDish(name) {
+  const all = [...doc().querySelectorAll('*')]
+  const candidates = all
+    .filter(el => (el.textContent || '').includes(name))
+    .sort((a, b) => (a.textContent || '').length - (b.textContent || '').length)
+  for (const el of candidates) {
+    let p = el
+    for (let i = 0; i < 8 && p; i++) {
+      const btn = [...(p.querySelectorAll ? p.querySelectorAll('button') : [])]
+        .find(b => (b.innerHTML || '').includes('lucide-plus'))
+      if (btn) return p
+      p = p.parentElement
+    }
+  }
+  return null
+}
+
+;(async () => {
+  try {
+    await new Promise(r => app.addEventListener('load', r, { once: true }))
+    await waitFor(() => doc().body.innerText.includes('顾客端'), 20000, '启动页')
+    btn('顾客端').click()
+    await waitFor(() => doc().querySelector('input[placeholder*="手机号"]'), 20000, '登录页')
+    const pwdTab = btn('密码')
+    if (pwdTab) { pwdTab.click(); await sleep(400) }
+    setInput(doc().querySelector('input[placeholder*="手机号"]'), '13800000001')
+    setInput(doc().querySelector('input[type="password"]'), '123456')
+    const agree = btn('我已阅读并同意')
+    if (agree) { agree.click(); await sleep(300) }
+    ;[...doc().querySelectorAll('button')].find(b => b.textContent.trim() === '登录').click()
+    await waitFor(() => (win().location.hash || '').includes('/customer'), 30000, '进入顾客端')
+    log('① 顾客端登录成功')
+
+    win().location.hash = '#/customer/shop/' + SHOP_ID
+    await waitFor(() => doc().body.innerText.includes(DISH_NAME), 25000, '菜单渲染')
+    log('② 已打开演示小店菜单（购物车开始为空：' + (qtyOf() === 0) + '）')
+
+    const card = cardOfDish(DISH_NAME)
+    if (!card) throw new Error('没找到菜品「' + DISH_NAME + '」的卡片')
+    const plusBtn = iconIn(card, 'plus')
+    if (!plusBtn) throw new Error('卡片里没有加号按钮')
+    plusBtn.click()
+    await sleep(2200)
+
+    const cartA = readCart()
+    const dishId = cartA.items.length ? cartA.items[cartA.items.length - 1].dishId : ''
+    const afterPlus = qtyOf(dishId)
+    log('③ 点加号后：购物车 ' + JSON.stringify(cartA.items.map(i => ({ name: i.dishName, q: i.quantity }))) + '，该菜份数 = ' + afterPlus)
+    if (afterPlus !== 1) throw new Error('加号没生效')
+
+    const card2 = cardOfDish(DISH_NAME)
+    const minusBtn = card2 ? iconIn(card2, 'minus') : null
+    if (!minusBtn) throw new Error('点加号后卡片里没有出现减号按钮')
+    minusBtn.click()
+    await sleep(2200)
+    const afterMinus = qtyOf(dishId)
+    log('④ 点减号后该菜份数 = ' + afterMinus + '（期望 0）')
+    const minusGone = !(cardOfDish(DISH_NAME) && iconIn(cardOfDish(DISH_NAME), 'minus'))
+    log('   卡片上的减号随数量归零而消失：' + minusGone)
+    if (afterMinus !== 0) throw new Error('减号没有生效（数量没变）')
+    pass = true
+    log('✅ 减号正常：点一次从 1 降到 0')
+  } catch (e) {
+    log('❌ 测试异常: ' + (e && e.message ? e.message : String(e)))
+    try { log('   页面文字: ' + (doc().body.innerText || '').replace(/\n+/g, ' | ').slice(0, 200)) } catch (e2) { /* ignore */ }
+  }
+  log('SMOKE_RESULT=' + (pass ? 'PASS' : 'FAIL'))
+  log('[done]')
+})()
+</script>
+</body>
+</html>

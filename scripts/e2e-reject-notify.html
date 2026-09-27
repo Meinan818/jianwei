@@ -1,0 +1,126 @@
+<!doctype html>
+<!--
+  顾客"被拒单提醒"回归测试（2026-09-28 新增功能）
+
+  逻辑：顾客端每次从数据库重拉订单时，对照"这台设备上次见到的状态"，
+  发现某单变成 rejected 就往通知中心写一条 + 弹提示（见 useOrders 的 notifyPassiveOrderChanges）。
+
+  本脚本真实走一遍：顾客先看到某单（记录状态）→ 商家在另一端拒单 → 顾客再看通知中心。
+  用法：node scripts/e2e-smoke.mjs scripts/e2e-reject-notify.html customer
+-->
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>E2E 拒单提醒</title></head>
+<body style="font:12px/1.5 monospace">
+<pre id="log">[start]</pre>
+<iframe id="app" src="/" style="width:420px;height:820px;border:1px solid #ccc"></iframe>
+<script>
+const out = document.getElementById('log')
+const log = (m) => { out.textContent += '\n' + m }
+const sleep = (ms) => new Promise(r => setTimeout(r, ms))
+const app = document.getElementById('app')
+const doc = () => app.contentDocument
+const win = () => app.contentWindow
+let pass = false
+let skipped = false
+
+async function waitFor(fn, timeout = 25000, label = '') {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeout) {
+    try { const r = fn(); if (r) return r } catch (e) { /* not ready */ }
+    await sleep(200)
+  }
+  throw new Error('等待超时: ' + label)
+}
+const btn = (text) =>
+  [...doc().querySelectorAll('button,a')].find(e => e.textContent.trim().includes(text))
+const allBtn = (text) =>
+  [...doc().querySelectorAll('button,a')].filter(e => e.textContent.trim().includes(text))
+function setInput(el, value) {
+  const w = win()
+  const setter = Object.getOwnPropertyDescriptor(w.HTMLInputElement.prototype, 'value').set
+  setter.call(el, value)
+  el.dispatchEvent(new w.Event('input', { bubbles: true }))
+}
+function readOrders() {
+  const store = win().localStorage
+  for (let i = 0; i < store.length; i++) {
+    const k = store.key(i)
+    if (k && k.indexOf('food_delivery_orders') >= 0) {
+      try { const arr = JSON.parse(store.getItem(k)); if (Array.isArray(arr)) return arr } catch (e) { /* ignore */ }
+    }
+  }
+  return []
+}
+async function login(roleLabel, phone, route) {
+  await waitFor(() => doc().body.innerText.includes(roleLabel), 25000, '启动页')
+  btn(roleLabel).click()
+  await waitFor(() => doc().querySelector('input[placeholder*="手机号"]'), 25000, '登录页')
+  const pwdTab = btn('密码')
+  if (pwdTab) { pwdTab.click(); await sleep(400) }
+  setInput(doc().querySelector('input[placeholder*="手机号"]'), phone)
+  setInput(doc().querySelector('input[type="password"]'), '123456')
+  const agree = btn('我已阅读并同意')
+  if (agree) { agree.click(); await sleep(300) }
+  ;[...doc().querySelectorAll('button')].find(b => b.textContent.trim() === '登录').click()
+  await waitFor(() => (win().location.hash || '').includes(route), 30000, '进入 ' + route)
+}
+
+;(async () => {
+  try {
+    await new Promise(r => app.addEventListener('load', r, { once: true }))
+
+    // ① 顾客先看到这笔待接单订单（记录"上次见到的状态"）
+    await login('顾客端', '13800000001', '/customer')
+    win().location.hash = '#/customer/orders'
+    await sleep(4000)
+    const ordersBefore = readOrders()
+    const pending = ordersBefore.filter(o => o.status === 'pending')
+    log('① 顾客端已看到 ' + pending.length + ' 笔待接单（记录状态）')
+    if (pending.length === 0) {
+      log('⚠ 当前没有待接单订单，跳过（先让顾客下一单再来测）')
+      skipped = true
+      throw { skip: true }
+    }
+
+    // ② 换商家端，把最新那笔拒掉
+    win().location.hash = '#/'
+    await sleep(1500)
+    await login('商家端', '13800000002', '/merchant')
+    win().location.hash = '#/merchant/orders'
+    await sleep(4000)
+    const rejectBtn = allBtn('拒单')[0]
+    if (!rejectBtn) throw new Error('商家端看不到「拒单」按钮')
+    rejectBtn.click()
+    await waitFor(() => btn('确认拒单'), 8000, '拒单弹窗')
+    const chip = btn('食材不足')
+    if (chip) { chip.click(); await sleep(300) }
+    btn('确认拒单').click()
+    log('② 商家端已拒掉一笔待接单订单')
+    await sleep(5000)
+
+    // ③ 顾客端再看：通知中心应该有"订单被商家拒单"
+    win().location.hash = '#/'
+    await sleep(1500)
+    await login('顾客端', '13800000001', '/customer')
+    win().location.hash = '#/customer/notifications'
+    await sleep(4000)
+    const text = (doc().body.innerText || '').replace(/\n+/g, ' | ')
+    const got = text.indexOf('订单被商家拒单') >= 0 || text.indexOf('商家已拒单') >= 0
+    log('③ 顾客端通知中心里出现拒单提醒：' + got)
+    log('   片段：' + text.slice(0, 160))
+    if (!got) throw new Error('顾客端没有收到拒单提醒')
+    pass = true
+    log('✅ 拒单提醒正常：顾客端在订单被拒后会收到通知')
+  } catch (e) {
+    if (e && e.skip) { /* 已记录 */ }
+    else {
+      log('❌ 测试异常: ' + (e && e.message ? e.message : String(e)))
+      try { log('   页面文字: ' + (doc().body.innerText || '').replace(/\n+/g, ' | ').slice(0, 200)) } catch (e2) { /* ignore */ }
+    }
+  }
+  log('SMOKE_RESULT=' + (skipped ? 'SKIP' : (pass ? 'PASS' : 'FAIL')))
+  log('[done]')
+})()
+</script>
+</body>
+</html>

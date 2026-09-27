@@ -5,6 +5,8 @@ import { SHOP_STATUS_KEY } from '@/data/shop-status'
 import type { IShopStatus } from '@/data/shop-status'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
+import { useNotifications } from '@/hooks/useNotifications'
+import { toast } from 'sonner'
 import { fetchVisibleOrders, upsertOrder } from '@/data/orders-remote'
 import { registerRealtimeRefresh } from '@/data/realtime'
 
@@ -215,8 +217,36 @@ function buildTimeline(status: OrderStatus, createdAt: number, order?: IOrder): 
   })
 }
 
+/**
+ * 顾客侧"被动收到的订单变化"凭据：订单 id → 这台设备最后一次见到的状态。
+ * 只有顾客端会读写它——这样商家端在同一浏览器里操作时，不会把顾客"还没看到的变化"吃掉。
+ */
+const ORDER_SEEN_STATUS_KEY = 'food_delivery_order_status_seen'
+
+function readSeenStatuses(): Record<string, string> {
+  try {
+    const raw = scopedStorage.getItem(ORDER_SEEN_STATUS_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      if (parsed && typeof parsed === 'object') return parsed as Record<string, string>
+    }
+  } catch {
+    // ignore
+  }
+  return {}
+}
+
+function writeSeenStatuses(map: Record<string, string>) {
+  try {
+    scopedStorage.setItem(ORDER_SEEN_STATUS_KEY, JSON.stringify(map))
+  } catch {
+    // ignore
+  }
+}
+
 export function useOrders() {
   const { user, isLoggedIn } = useAuth()
+  const { pushNotification } = useNotifications()
   // 已同步到数据库的订单快照（id → JSON），用于判断哪些订单发生了本地改动
   const syncedRef = useRef<Map<string, string>>(new Map())
 
@@ -262,6 +292,32 @@ export function useOrders() {
   //   这样 19 处既有业务逻辑（状态机、时间线、金额）一行都不用改。
   //   第 3 期：数据库有变化时（Realtime 推送）同样走这里重拉一遍，参数 realtime 区分来源。
   // ==========================================================================
+  /**
+   * 2026-09-28 新增：顾客被动收到的订单变化要提醒。
+   *
+   * 场景：商家在另一台设备点了"拒单"，顾客这边（实时推送或下次打开）会拿到新状态。
+   * 这里对照"这台设备上次见到的状态"，一旦发现变成已拒单，就往通知中心写一条并弹提示。
+   * 只有顾客端做这件事；第一次见到某订单时只记录、不通知（避免刷屏历史订单）。
+   */
+  const notifyPassiveOrderChanges = useCallback((remote: IOrder[]) => {
+    if (user.role !== 'customer') return
+    const seen = readSeenStatuses()
+    for (const o of remote) {
+      const prevStatus = seen[o.id]
+      if (prevStatus && prevStatus !== o.status && o.status === 'rejected') {
+        const reasonText = o.rejectReason ? '原因：' + o.rejectReason : ''
+        pushNotification({
+          category: 'order',
+          title: '订单被商家拒单',
+          content: '「' + (o.shopName || '商家') + '」已拒绝你的订单' + (reasonText ? '，' + reasonText : '') + '。你可以重新下单或换一家。',
+          orderId: o.id,
+        })
+        toast.error('商家已拒单', { description: reasonText || '该订单已结束，可重新下单' })
+      }
+      seen[o.id] = o.status
+    }
+    writeSeenStatuses(seen)
+  }, [user.role, pushNotification])
   const refreshOrdersFromRemote = useCallback(async (options?: { realtime?: boolean }) => {
     if (!supabase || !isLoggedIn) return
     // 合并前的基线快照：数据库是「真相」，但它可能比本地旧——
@@ -270,6 +326,8 @@ export function useOrders() {
     const baselineBefore = new Map(syncedRef.current)
     const remote = await fetchVisibleOrders()
     if (!remote) return
+    // 顾客：发现"被拒单"这类被动变化时提醒（写通知 + 弹提示）
+    notifyPassiveOrderChanges(remote)
     const remoteIds = new Set(remote.map(o => o.id))
     // 基线始终指向「数据库里现在是什么」，写库逻辑靠它判断哪些订单还需要写
     remote.forEach(o => syncedRef.current.set(o.id, JSON.stringify(o)))
@@ -288,7 +346,7 @@ export function useOrders() {
       scopedStorage.setItem(ORDERS_KEY, JSON.stringify(merged))
       return merged
     })
-  }, [isLoggedIn, user.id])
+  }, [isLoggedIn, user.id, notifyPassiveOrderChanges])
 
   // 登录后拉一遍（原第 2 期行为）
   useEffect(() => {
@@ -319,6 +377,7 @@ export function useOrders() {
       cancelled = true
     }
   }, [orders, isLoggedIn])
+
 
   const saveOrders = useCallback((newOrders: IOrder[]) => {
     setOrders(newOrders)
