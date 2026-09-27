@@ -1,8 +1,16 @@
-import { useState, useEffect, useCallback, createContext, useContext } from 'react'
+import { useState, useEffect, useCallback, useRef, createContext, useContext } from 'react'
 import React from 'react'
 import { scopedStorage } from '@lark-apaas/client-toolkit-lite'
 import type { IMemberInfo, IWalletRecord, IWithdrawRecord } from '@/data/member'
 import { MOCK_MEMBER_INFO, MOCK_WALLET_RECORDS, MEMBER_LEVELS, MOCK_WITHDRAW_RECORDS } from '@/data/member'
+import { useAuth } from '@/hooks/useAuth'
+import {
+  fetchWalletSnapshot,
+  applyWalletTxn,
+  syncWalletStats,
+  insertWithdrawRecord,
+  completeWithdrawRecord,
+} from '@/data/wallet-remote'
 
 const MEMBER_KEY = 'food_delivery_member'
 const WALLET_KEY = 'food_delivery_wallet_records'
@@ -39,12 +47,15 @@ interface WalletContextValue {
 const WalletContext = createContext<WalletContextValue | null>(null)
 
 export function WalletProvider({ children }: { children: React.ReactNode }) {
+  const { user, isLoggedIn } = useAuth()
   const [memberInfo, setMemberInfo] = useState<IMemberInfo>(MOCK_MEMBER_INFO)
   const [walletRecords, setWalletRecords] = useState<IWalletRecord[]>([])
   const [withdrawRecords, setWithdrawRecords] = useState<IWithdrawRecord[]>([])
   const [hasPayPassword, setHasPayPassword] = useState(true)
+  // 登录拉取期间有本地改动就跳过迟到的回包（与 useAddresses 同一套防护）
+  const mutatedRef = useRef(false)
 
-  // 初始化
+  // 初始化（原行为保留：未登录/未配库时读本地，没有则用 Mock 兜底）
   useEffect(() => {
     try {
       const mRaw = scopedStorage.getItem(MEMBER_KEY)
@@ -81,6 +92,26 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setHasPayPassword(!!pwd || true) // 默认真，演示用123456
   }, [])
 
+  // 第 2 期 2g：登录后以数据库为准拉一遍（profiles + 流水 + 提现记录）
+  useEffect(() => {
+    if (!isLoggedIn || !user?.id) return
+    let cancelled = false
+    void (async () => {
+      const snap = await fetchWalletSnapshot(user.id)
+      if (cancelled || !snap) return // 未配置 / 读失败 → 保持本地
+      if (mutatedRef.current) return // 本地已有更新的改动，别用旧回包覆盖
+      setMemberInfo(snap.memberInfo)
+      setWalletRecords(snap.records)
+      setWithdrawRecords(snap.withdraws)
+      scopedStorage.setItem(MEMBER_KEY, JSON.stringify(snap.memberInfo))
+      scopedStorage.setItem(WALLET_KEY, JSON.stringify(snap.records))
+      scopedStorage.setItem(WITHDRAW_KEY, JSON.stringify(snap.withdraws))
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [isLoggedIn, user?.id])
+
   const saveMember = useCallback((info: IMemberInfo) => {
     setMemberInfo(info)
     scopedStorage.setItem(MEMBER_KEY, JSON.stringify(info))
@@ -89,6 +120,15 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const saveRecords = useCallback((records: IWalletRecord[]) => {
     setWalletRecords(records)
     scopedStorage.setItem(WALLET_KEY, JSON.stringify(records))
+  }, [])
+
+  // 用数据库返回的流水替换本地临时记录（拿到 uuid 与权威 balance_after）
+  const patchRecord = useCallback((tempId: string, dbRecord: IWalletRecord) => {
+    setWalletRecords(prev => {
+      const upd = prev.map(r => (r.id === tempId ? dbRecord : r))
+      scopedStorage.setItem(WALLET_KEY, JSON.stringify(upd))
+      return upd
+    })
   }, [])
 
   // 当前等级 / 下一等级 / 进度
@@ -100,6 +140,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
   // 开通会员
   const openVip = useCallback((months = 1) => {
+    mutatedRef.current = true
     setMemberInfo(prev => {
       const updated: IMemberInfo = {
         ...prev,
@@ -113,6 +154,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
   // 增加积分与成长值（每消费 1 元 = 1 成长值，会员按倍率）
   const addPointsAndGrowth = useCallback((amount: number, _orderId?: string) => {
+    mutatedRef.current = true
     setMemberInfo(prev => {
       const rate = [1, 1.2, 1.5, 2, 3][prev.level - 1] || 1
       const gained = Math.floor(amount * rate)
@@ -130,13 +172,18 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         totalSpent: +(prev.totalSpent + amount).toFixed(2),
       }
       scopedStorage.setItem(MEMBER_KEY, JSON.stringify(updated))
+      // 数据库同步成长值/累计消费（余额不在这里动）；失败只记日志
+      if (isLoggedIn && user?.id) {
+        void syncWalletStats(user.id, updated.points, updated.totalSpent)
+      }
       return updated
     })
-  }, [])
+  }, [isLoggedIn, user?.id])
 
   // 充值
   const recharge = useCallback((amount: number, method = 'wechat'): boolean => {
     if (amount <= 0) return false
+    mutatedRef.current = true
     const time = Date.now()
     const record: IWalletRecord = {
       id: `wr_${time}`,
@@ -158,12 +205,20 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       scopedStorage.setItem(WALLET_KEY, JSON.stringify(updated))
       return updated
     })
+    // 数据库原子记账（改 profiles.balance + 写流水），成功后用返回行替换本地临时记录
+    if (isLoggedIn && user?.id) {
+      void applyWalletTxn('recharge', amount, record.title, record.desc).then(dbRec => {
+        if (dbRec) patchRecord(record.id, dbRec)
+      })
+    }
     return true
-  }, [])
+  }, [isLoggedIn, user?.id, patchRecord])
 
   // 消费
   const consumeBalance = useCallback((amount: number, title: string, orderId?: string): boolean => {
     let ok = false
+    let tempId: string | null = null
+    mutatedRef.current = true
     setMemberInfo(prev => {
       if (prev.balance < amount) return prev
       const updated = { ...prev, balance: +(prev.balance - amount).toFixed(2) }
@@ -180,6 +235,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         createdAt: Date.now(),
         orderId,
       }
+      tempId = record.id
       setWalletRecords(prev2 => {
         const updated = [record, ...prev2]
         scopedStorage.setItem(WALLET_KEY, JSON.stringify(updated))
@@ -187,11 +243,18 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       })
       return updated
     })
+    if (ok && tempId && isLoggedIn && user?.id) {
+      void applyWalletTxn('consume', -amount, title, orderId ? `订单 ${orderId.slice(-6)}` : undefined, orderId).then(dbRec => {
+        if (dbRec) patchRecord(tempId as string, dbRec)
+      })
+    }
     return ok
-  }, [])
+  }, [isLoggedIn, user?.id, patchRecord])
 
   const refundBalance = useCallback((amount: number, title: string, orderId?: string): boolean => {
     if (amount <= 0) return false
+    mutatedRef.current = true
+    let tempId: string | null = null
     setMemberInfo(prev => {
       const updated = { ...prev, balance: +(prev.balance + amount).toFixed(2) }
       scopedStorage.setItem(MEMBER_KEY, JSON.stringify(updated))
@@ -205,6 +268,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         createdAt: Date.now(),
         orderId,
       }
+      tempId = record.id
       setWalletRecords(prev2 => {
         const updated = [record, ...prev2]
         scopedStorage.setItem(WALLET_KEY, JSON.stringify(updated))
@@ -212,8 +276,13 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       })
       return updated
     })
+    if (tempId && isLoggedIn && user?.id) {
+      void applyWalletTxn('refund', amount, title, orderId ? `订单 ${orderId.slice(-6)}` : undefined, orderId).then(dbRec => {
+        if (dbRec) patchRecord(tempId as string, dbRec)
+      })
+    }
     return true
-  }, [])
+  }, [isLoggedIn, user?.id, patchRecord])
 
   // 支付密码
   const verifyPayPassword = useCallback((pwd: string): boolean => {
@@ -239,8 +308,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     const fee = amount >= 100 ? 0 : 1
     if (amount + fee > memberInfo.balance) return { success: false, msg: '余额不足以支付手续费' }
 
+    mutatedRef.current = true
     const totalDeduct = amount + fee
     const time = Date.now()
+    const withdrawTitle = `提现到${accountType === 'wechat' ? '微信' : accountType === 'alipay' ? '支付宝' : '银行卡'}`
+    const withdrawDesc = fee > 0 ? `含 ${fee} 元手续费` : '免手续费'
     const withdrawRecord: IWithdrawRecord = {
       id: `wd_${time}`,
       amount,
@@ -262,8 +334,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         type: 'withdraw',
         amount: -totalDeduct,
         balanceAfter: updated.balance,
-        title: `提现到${accountType === 'wechat' ? '微信' : accountType === 'alipay' ? '支付宝' : '银行卡'}`,
-        desc: fee > 0 ? `含 ${fee} 元手续费` : '免手续费',
+        title: withdrawTitle,
+        desc: withdrawDesc,
         createdAt: time,
       }
       setWalletRecords(prev2 => {
@@ -283,17 +355,35 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       return upd
     })
 
-    // 演示加速：3 秒后到账
+    // 数据库：余额扣减走原子 RPC，提现记录单独写表（uuid 由数据库生成）
+    let currentWithdrawId = withdrawRecord.id // id 换成数据库 uuid 后，3 秒后的到账更新仍要能命中
+    if (isLoggedIn && user?.id) {
+      void applyWalletTxn('withdraw', -totalDeduct, withdrawTitle, withdrawDesc).then(dbRec => {
+        if (dbRec) patchRecord(`wr_${time}`, dbRec)
+      })
+      void insertWithdrawRecord(withdrawRecord, user.id).then(dbId => {
+        if (!dbId) return
+        currentWithdrawId = dbId
+        setWithdrawRecords(prev => {
+          const upd = prev.map(r => (r.id === `wd_${time}` ? { ...r, id: dbId } : r))
+          scopedStorage.setItem(WITHDRAW_KEY, JSON.stringify(upd))
+          return upd
+        })
+      })
+    }
+
+    // 演示加速：3 秒后到账（本地状态 + 数据库状态一起更新）
     setTimeout(() => {
       setWithdrawRecords(prev => {
-        const upd = prev.map(r => r.id === withdrawRecord.id ? { ...r, status: 'success' as const, arriveAt: Date.now() } : r)
+        const upd = prev.map(r => r.id === currentWithdrawId ? { ...r, status: 'success' as const, arriveAt: Date.now() } : r)
         scopedStorage.setItem(WITHDRAW_KEY, JSON.stringify(upd))
         return upd
       })
+      void completeWithdrawRecord(currentWithdrawId)
     }, 3000)
 
     return { success: true, msg: '提现申请已提交' }
-  }, [memberInfo.balance, verifyPayPassword])
+  }, [memberInfo.balance, verifyPayPassword, isLoggedIn, user?.id, patchRecord])
 
   const value: WalletContextValue = {
     memberInfo,

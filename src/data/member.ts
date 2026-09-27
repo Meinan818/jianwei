@@ -18,7 +18,8 @@ export interface IMemberInfo {
 
 export interface IWalletRecord {
   id: string
-  type: 'recharge' | 'consume' | 'refund' | 'reward' | 'withdraw'
+  // 与数据库 wallet_txn_type 枚举一致（第 2 期 2g）：earn 为骑手收入
+  type: 'recharge' | 'consume' | 'refund' | 'reward' | 'withdraw' | 'earn'
   amount: number
   balanceAfter: number
   title: string
