@@ -32,9 +32,9 @@
 | 线上站点 | **第十一版**（第 2 期含 2h 商家配置上云，全部完成；第八版起跨设备看新订单/新消息**不用刷新**） |
 | 本地 `main` | 与 `origin/main` 同步 |
 | 关键提交 | `4f2b3ea` 2h 商家配置上云；`3a9d6b1` 第 3 期实时推送；`ded36a4` 2d 地址；`0866a2b` 2e 评价/售后/异常；`477e16f` 2f 优惠券；`92d623b` 2g 钱包 |
-| 已在真机验证 | `node scripts/verify-realtime.mjs`（顾客改单 → 商家端不刷新即收到）；`node scripts/verify-merchant-config.mjs`（商家改菜品/店铺/活动写得进库、越权写被 RLS 拦、顾客账号能读到商家改的新价） |
+| 已在真机验证 | `node scripts/verify-realtime.mjs`（顾客改单 → 商家端不刷新即收到）；`node scripts/verify-merchant-config.mjs`（商家改菜品/店铺/活动写得进库、越权写被 RLS 拦、顾客账号能读到商家改的新价）；2026-09-28 另测：顾客端订阅 dishes/shops 能收到商家改动的推送 |
 | 尚未验证 | 浏览器里的实际观感（两台设备开着页面互看）；2e/2f/2g/2h 的浏览器端到端演示 |
-| 待人工操作 | 在 Supabase 跑 `supabase/migrations/20260927010000_realtime_shop_config.sql`（商家配置与会话的实时推送；**只跑这一份即可**，它同时覆盖了旧的 conversations 那份。不跑只是另一端要刷新一下，功能照常） |
+| 待人工操作 | 无（那条实时 SQL 已于 2026-09-28 在 Supabase 执行完毕：自检 8 行 `in_realtime_pub = true`，并用脚本实测过「商家改菜品/店铺 → 顾客端订阅收到推送」） |
 
 > 开工前若发现本地还有**未 push 的提交**，先跟用户确认要不要推，不要把半成品直接推上线。
 
@@ -288,6 +288,10 @@ rejected         商家拒单（终态）
     `20260927000000_realtime_conversations.sql`（两份都可重复执行，跑重了也无副作用）。
     不补的后果：对方把会话标记已读、新建会话，或商家改了菜品/店铺配置时，这边不实时刷新，
     要等下次手动刷新/重新登录才同步（订单与消息的实时不受影响，它们本来就在通道里）。
+  - ✅ **已执行并实测（2026-09-28）**：自检 8 行 `in_realtime_pub = true`；用脚本对真实数据库验证
+    「顾客端订阅 dishes / shops → 商家改一行 → 推送送达」（收到 dishes 2 条、shops 1 条）。
+    ⚠️ **刚跑完 SQL 时不要立刻下结论**：实测那一刻新表还收不到推送（同时刻 orders 正常），
+    约 1 分钟后重新建连接订阅就正常了——Realtime 服务会缓存 publication 的表清单，需要它重读一次。
   - ✅ **实测结论（2026-09-27，`node scripts/verify-realtime.mjs`，两个演示账号互测）**：
     顾客改单后，商家端在**默认 replica identity 下**正常收到推送，**不需要** `REPLICA IDENTITY FULL`。
     （一开始推断"orders 的读策略 `can_see_order` 要读多列，默认设置下更新事件会被静默丢弃"，
