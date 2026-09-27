@@ -4,6 +4,7 @@ import type { IAuthUser, UserRole, IRegisteredAccount } from '@/data/auth'
 import { SIMULATED_CODE, ACCOUNTS_KEY_PREFIX } from '@/data/auth'
 import { supabase, supabaseEnabled, phoneToAuthEmail, authEmailToPhone } from '@/lib/supabase'
 import { resetShopsCache } from '@/data/shops-remote'
+import { startRealtime, stopRealtime } from '@/data/realtime'
 
 const AUTH_KEY = 'food_delivery_auth'
 const PROFILE_KEY_PREFIX = 'food_delivery_profile_' // + role，按角色独立存昵称/头像
@@ -151,6 +152,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(u)
     scopedStorage.setItem(AUTH_KEY, JSON.stringify(u))
   }, [])
+
+  // 第 3 期：登录后建立 Supabase Realtime 订阅（订单 / 消息实时刷新），
+  // 登出或切换账号时拆掉，避免上一个账号的推送漏进新会话。
+  // 未配置 Supabase（本地模拟登录）时 startRealtime/stopRealtime 都是空操作。
+  useEffect(() => {
+    if (!supabase || !user.loggedIn || !user.id) {
+      stopRealtime()
+      return
+    }
+    startRealtime(user.id)
+    return () => stopRealtime()
+  }, [user.id, user.loggedIn])
 
   // 把注册账号转换成当前登录用户
   const accountToUser = useCallback((acc: IRegisteredAccount, role: UserRole): IAuthUser => {

@@ -6,6 +6,7 @@ import type { IShopStatus } from '@/data/shop-status'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/useAuth'
 import { fetchVisibleOrders, upsertOrder } from '@/data/orders-remote'
+import { registerRealtimeRefresh } from '@/data/realtime'
 
 const ORDERS_KEY = 'food_delivery_orders'
 const ORDERS_CHANGE_EVENT = 'food_delivery_orders_change'
@@ -245,28 +246,46 @@ export function useOrders() {
   //       但保留数据库里还没有的本地订单（例如刚下单、尚未同步上去的）。
   //   写：orders 状态变化后，把与会话基线不一致的订单 upsert 回去。
   //   这样 19 处既有业务逻辑（状态机、时间线、金额）一行都不用改。
-  //   注意：跨设备的"实时"看到新单要等第 3 期 Realtime；现阶段需刷新页面。
+  //   第 3 期：数据库有变化时（Realtime 推送）同样走这里重拉一遍，参数 realtime 区分来源。
   // ==========================================================================
+  const refreshOrdersFromRemote = useCallback(async (options?: { realtime?: boolean }) => {
+    if (!supabase || !isLoggedIn) return
+    // 合并前的基线快照：数据库是「真相」，但它可能比本地旧——
+    // 本地刚点了接单/出餐、还没写进数据库时（基线对不上），必须以本地为准，
+    // 否则这一次刷新会把刚做的操作弹回旧状态，而且再也写不回去。
+    const baselineBefore = new Map(syncedRef.current)
+    const remote = await fetchVisibleOrders()
+    if (!remote) return
+    const remoteIds = new Set(remote.map(o => o.id))
+    // 基线始终指向「数据库里现在是什么」，写库逻辑靠它判断哪些订单还需要写
+    remote.forEach(o => syncedRef.current.set(o.id, JSON.stringify(o)))
+    setOrders(prev => {
+      const localById = new Map(prev.map(o => [o.id, o]))
+      const localOnly = prev.filter(o => !remoteIds.has(o.id))
+      const fromRemote = remote.map(r => {
+        const local = localById.get(r.id)
+        const unsyncedLocal = local ? baselineBefore.get(r.id) !== JSON.stringify(local) : false
+        // 首次拉取（登录/换账号）仍以数据库为准；
+        // 实时刷新则保住本地尚未写库的改动，等写库逻辑把它推上去。
+        return options?.realtime && unsyncedLocal && local ? local : r
+      })
+      const merged = [...localOnly, ...fromRemote].sort((a, b) => b.createdAt - a.createdAt)
+      if (JSON.stringify(prev) === JSON.stringify(merged)) return prev
+      scopedStorage.setItem(ORDERS_KEY, JSON.stringify(merged))
+      return merged
+    })
+  }, [isLoggedIn, user.id])
+
+  // 登录后拉一遍（原第 2 期行为）
+  useEffect(() => {
+    void refreshOrdersFromRemote()
+  }, [refreshOrdersFromRemote])
+
+  // 第 3 期：数据库有变化（别的端改了订单）时立即重拉，不再需要手动刷新
   useEffect(() => {
     if (!supabase || !isLoggedIn) return
-    let cancelled = false
-    void (async () => {
-      const remote = await fetchVisibleOrders()
-      if (cancelled || !remote) return
-      const remoteIds = new Set(remote.map(o => o.id))
-      remote.forEach(o => syncedRef.current.set(o.id, JSON.stringify(o)))
-      setOrders(prev => {
-        const localOnly = prev.filter(o => !remoteIds.has(o.id))
-        const merged = [...localOnly, ...remote].sort((a, b) => b.createdAt - a.createdAt)
-        if (JSON.stringify(prev) === JSON.stringify(merged)) return prev
-        scopedStorage.setItem(ORDERS_KEY, JSON.stringify(merged))
-        return merged
-      })
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [isLoggedIn, user.id])
+    return registerRealtimeRefresh('orders', () => refreshOrdersFromRemote({ realtime: true }))
+  }, [isLoggedIn, refreshOrdersFromRemote])
 
   // 把本地改动回写数据库（只写内容真的变了的订单，避免每次渲染都打库）
   useEffect(() => {

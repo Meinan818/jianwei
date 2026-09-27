@@ -1,6 +1,8 @@
 /**
- * 离线校验两个迁移脚本：把 init_schema.sql 与 seed_demo.sql 真实跑在
+ * 离线校验全部迁移脚本：把 supabase/migrations/ 下的 SQL 真实跑在
  * WASM 版 Postgres（PGlite）上，逐条报告失败的语句。
+ * 执行顺序与 Supabase 一致：按文件名排序；seed 与后续增量脚本都连跑两遍，
+ * 第二遍用于验证「可重复执行」（历史上正是一次重跑踩到了唯一约束冲突）。
  *
  * 为什么需要它：PostgreSQL 在 CREATE FUNCTION / CREATE POLICY 时会校验引用的表与类型，
  * 迁移脚本存在"函数排在建表之前""枚举值漏引号"之类的顺序/语法问题时，
@@ -9,7 +11,12 @@
  * 用法（PGlite 只用于本地校验，不入 package.json）：
  *   mkdir %TEMP%\jw-sqlcheck && cd %TEMP%\jw-sqlcheck
  *   npm init -y && npm install @electric-sql/pglite --registry=https://registry.npmmirror.com
- *   node <仓库路径>\supabase\gen\verify_local.mjs
+ *   copy "<仓库路径>\supabase\gen\verify_local.mjs" .
+ *   node verify_local.mjs "<仓库路径>"
+ *
+ * ⚠️ 为什么必须先把脚本复制过去：Node 的 ESM 按「脚本所在的目录」解析裸包名，
+ *    不认当前工作目录。直接 `node <仓库路径>\supabase\gen\verify_local.mjs` 会报
+ *    Cannot find package '@electric-sql/pglite'（即使 PGlite 就装在当前目录）。
  *
  * 说明：本地没有 Supabase 的 auth / storage 组件，脚本会用等价桩对象代替；
  * 本地也没有 pgcrypto，crypt/gen_salt 会用函数桩替代（Supabase 上 pgcrypto 是自带的）。
@@ -27,6 +34,15 @@ const ROOT = process.argv[2]
   : path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const INIT = path.join(ROOT, 'supabase/migrations/20260915000000_init_schema.sql');
 const SEED = path.join(ROOT, 'supabase/migrations/20260915010000_seed_demo.sql');
+// 其余补充 migration（第 3 期起新增的脚本）：按文件名顺序，在 seed 之后执行。
+// 新增脚本不用改本文件，放进 supabase/migrations/ 即可被自动纳入校验。
+const MIGRATION_DIR = path.join(ROOT, 'supabase/migrations');
+const EXTRA = fs
+  .readdirSync(MIGRATION_DIR)
+  .filter(f => f.endsWith('.sql'))
+  .sort()
+  .filter(f => f !== path.basename(INIT) && f !== path.basename(SEED))
+  .map(f => path.join(MIGRATION_DIR, f));
 
 const db = new PGlite();
 
@@ -179,6 +195,24 @@ if (initOk) {
       }
     }
 
+  // ── 4b. 跑其余 migration（增量脚本），每份连跑两遍验证可重复执行 ──────────
+  if (EXTRA.length === 0) {
+    console.log('\n（没有其它 migration 需要执行）');
+  }
+  for (const file of EXTRA) {
+    const name = path.basename(file);
+    const sql = fs.readFileSync(file, 'utf8');
+    for (const round of [1, 2]) {
+      try {
+        await db.exec(sql);
+        console.log(`✅ ${name} 第 ${round} 遍通过${round === 2 ? '（幂等）' : ''}`);
+      } catch (e) {
+        console.log(`❌ ${name} 第 ${round} 遍失败：${e.message.split('\n')[0]}`);
+        break;
+      }
+    }
+  }
+
   // ── 5. 自检数字 ────────────────────────────────────────────────────────
   console.log('\n── 5. 自检（期望 shops 9 / categories 26 / dishes 62 / coupons 6 / users 3）──');
   try {
@@ -254,6 +288,36 @@ if (initOk) {
       console.log(bad);
     } else {
       console.log(`✅ ${r.rows.length} 个演示账号的四个 token 列均为空字符串`);
+    }
+  } catch (e) {
+    console.log('断言查询失败：' + e.message);
+  }
+
+  // ── 8. 断言：第 3 期 Realtime 的前提——四张订阅的表都在实时通道里 ────────
+  //    没进 publication 的表，变更事件根本不会发出（第 3 期补的就是漏掉的 conversations）。
+  //    "SQL 没报错"不等于"实时推送能用"，所以这里显式查一遍。
+  //
+  //    注：**不**断言 REPLICA IDENTITY FULL。曾经推断"orders 的读策略要读多列，
+  //    默认 replica identity 会让更新事件被静默丢弃"，但用 scripts/verify-realtime.mjs
+  //    对真实数据库实测后推翻了该推断（两个演示账号互测，默认设置下商家端正常收到推送）。
+  console.log('\n── 8. 断言：Realtime 前提（订阅的四张表都在 publication 里）──');
+  try {
+    const r = await db.query(`
+      select t.name as table_name,
+             (p.tablename is not null) as in_pub
+        from (values ('orders'), ('order_items'), ('messages'), ('conversations')) as t(name)
+        left join pg_publication_tables p
+               on p.pubname = 'supabase_realtime'
+              and p.schemaname = 'public'
+              and p.tablename = t.name
+       order by t.name
+    `);
+    console.log(r.rows.map(x => `   ${x.table_name}: in_pub=${x.in_pub}`).join('\n'));
+    const missing = r.rows.filter(x => !x.in_pub).map(x => x.table_name);
+    if (missing.length > 0) {
+      console.log(`❌ 这些表不在 supabase_realtime 里，它们的变更不会推送：${missing.join('、')}`);
+    } else {
+      console.log('✅ orders / order_items / messages / conversations 均在 supabase_realtime 中');
     }
   } catch (e) {
     console.log('断言查询失败：' + e.message);

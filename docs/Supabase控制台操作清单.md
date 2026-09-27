@@ -62,6 +62,30 @@ select
 - [ ] 左侧 **Storage**：应看到 `avatars`、`dish-images`、`review-images` 三个桶，都是 public
 - [ ] **Database** → **Publications** → `supabase_realtime`：应能看到 orders、messages、notifications、refund_requests、delivery_exceptions 已在列表里（SQL 已加，不用手点）
 
+## ④b 第 3 期补丁：把会话表加进实时通道（约 1 分钟）
+
+代码已支持"跨设备不用刷新"。订单与消息的推送开箱可用，只剩一张表需要补：
+
+- [ ] **SQL Editor** → **New query**，粘贴执行 `supabase/migrations/20260927000000_realtime_conversations.sql`
+- [ ] 执行完应看到四行，都是 `in_realtime_pub = true`：
+
+```sql
+-- 脚本末尾自带这条自检，也可以单独再跑一次
+select t.name as table_name,
+       (p.tablename is not null) as in_realtime_pub
+  from (values ('orders'), ('order_items'), ('messages'), ('conversations')) as t(name)
+  left join pg_publication_tables p
+         on p.pubname = 'supabase_realtime'
+        and p.schemaname = 'public'
+        and p.tablename = t.name
+ order by t.name;
+```
+
+- 为什么需要它：建表脚本把 orders、order_items、messages 加进了实时通道，**漏掉了 conversations**。
+  不在通道里的表，变更事件根本不会发出——表现为对方把会话标记已读、或新建会话时这边不刷新。
+- 可以重复执行，不会报错。
+- 想自己验证"推送到底通不通"：在项目目录里跑 `node scripts/verify-realtime.mjs`（详见脚本头部说明）。
+
 ## ⑤ 拿两个连接参数发我（约 1 分钟）
 
 - [ ] 左侧 **Project Settings**（齿轮）→ **API**（新版可能叫 **API Keys**），或直接点项目顶部的 **Connect** 面板

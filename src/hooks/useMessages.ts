@@ -11,6 +11,7 @@ import {
   insertMessage,
   canSyncConversation,
 } from '@/data/messages-remote'
+import { registerRealtimeRefresh } from '@/data/realtime'
 
 const MESSAGES_CHANGE_EVENT = 'food_delivery_messages_change'
 
@@ -355,35 +356,54 @@ export function useMessages() {
   //       本地独有的保留（例如内置演示店的咨询会话无法入库）。
   //   写：先确保会话行存在（消息外键指向它），再插入新消息，最后回写会话的未读/最后一条消息。
   //   既有逻辑（会话 id 规则、三端未读分别计数）完全不动。
+  //   第 3 期：数据库有变化时（Realtime 推送）同样走这里重拉一遍，参数 realtime 区分来源。
   // ==========================================================================
+  const refreshMessagesFromRemote = useCallback(async (options?: { realtime?: boolean }) => {
+    if (!supabase || !user.loggedIn) return
+    // 合并前的基线快照，用来判断「这条会话本地还有没有没写进数据库的改动」
+    // （典型是刚点开聊天把未读清零，但回写还没完成）
+    const baselineBefore = new Map(syncedConvRef.current)
+    const remote = await fetchVisibleMessages()
+    if (!remote) return
+    // 基线始终指向「数据库里现在是什么」
+    remote.conversations.forEach(c => syncedConvRef.current.set(c.id, JSON.stringify(c)))
+    Object.values(remote.messages).flat().forEach(m => syncedMsgIdsRef.current.add(m.id))
+    setState(prev => {
+      const remoteIds = new Set(remote.conversations.map(c => c.id))
+      const localById = new Map(prev.conversations.map(c => [c.id, c]))
+      const localOnly = prev.conversations.filter(c => !remoteIds.has(c.id))
+      const fromRemote = remote.conversations.map(rc => {
+        const local = localById.get(rc.id)
+        const unsyncedLocal = local ? baselineBefore.get(rc.id) !== JSON.stringify(local) : false
+        // 首次拉取（登录/换账号）仍以数据库为准；
+        // 实时刷新则保住本地尚未写库的会话改动（未读数、最后一条消息）。
+        return options?.realtime && unsyncedLocal && local ? local : rc
+      })
+      const conversations = [...localOnly, ...fromRemote]
+      // 消息是只增不改的：远端有的以远端为准，本地还没写上去的保留在最前面
+      const messages: Record<string, IMessage[]> = { ...prev.messages }
+      for (const [cid, list] of Object.entries(remote.messages)) {
+        const seen = new Set(list.map(m => m.id))
+        const localKept = (prev.messages[cid] ?? []).filter(m => !seen.has(m.id))
+        messages[cid] = [...localKept, ...list].sort((a, b) => a.createdAt - b.createdAt)
+      }
+      const merged: MessagesState = { conversations, messages }
+      if (JSON.stringify(prev) === JSON.stringify(merged)) return prev
+      saveMessagesState(merged)
+      return merged
+    })
+  }, [user.id, user.loggedIn])
+
+  // 登录后拉一遍（原第 2 期行为）
+  useEffect(() => {
+    void refreshMessagesFromRemote()
+  }, [refreshMessagesFromRemote])
+
+  // 第 3 期：对方发来新消息时立即重拉，聊天页/未读角标不用刷新就能更新
   useEffect(() => {
     if (!supabase || !user.loggedIn) return
-    let cancelled = false
-    void (async () => {
-      const remote = await fetchVisibleMessages()
-      if (cancelled || !remote) return
-      remote.conversations.forEach(c => syncedConvRef.current.set(c.id, JSON.stringify(c)))
-      Object.values(remote.messages).flat().forEach(m => syncedMsgIdsRef.current.add(m.id))
-      setState(prev => {
-        const remoteIds = new Set(remote.conversations.map(c => c.id))
-        const localOnly = prev.conversations.filter(c => !remoteIds.has(c.id))
-        const conversations = [...localOnly, ...remote.conversations]
-        const messages: Record<string, IMessage[]> = { ...prev.messages }
-        for (const [cid, list] of Object.entries(remote.messages)) {
-          const seen = new Set(list.map(m => m.id))
-          const localKept = (prev.messages[cid] ?? []).filter(m => !seen.has(m.id))
-          messages[cid] = [...localKept, ...list].sort((a, b) => a.createdAt - b.createdAt)
-        }
-        const merged: MessagesState = { conversations, messages }
-        if (JSON.stringify(prev) === JSON.stringify(merged)) return prev
-        saveMessagesState(merged)
-        return merged
-      })
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [user.id, user.loggedIn])
+    return registerRealtimeRefresh('messages', () => refreshMessagesFromRemote({ realtime: true }))
+  }, [user.loggedIn, refreshMessagesFromRemote])
 
   // 回写数据库
   useEffect(() => {
