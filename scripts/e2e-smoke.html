@@ -1,0 +1,171 @@
+<!doctype html>
+<!--
+  真浏览器冒烟测试页（配合 scripts/e2e-smoke.mjs / npm run smoke 使用）
+
+  为什么需要它：2026-09-28 的两个 bug（商家端商品管理卡加载、订单明细被重复写入）
+  tsc / eslint / 构建**全都发现不了**，只有在真实浏览器里点一遍才暴露。
+  用户要求：以后提交前都要自己跑一遍。本文件就是"跑一遍"的执行体。
+
+  它做四件事：
+    1) 用 ?_role=customer|merchant|rider 指定的角色真实登录（演示账号 + 密码 123456）；
+    2) 逐个打开该端的主要页面；
+    3) 每页检查：没有落进错误兜底（页面加载失败）、没有卡在"加载中"、不是白屏；
+    4) 收集运行期未捕获异常与 console.error，一并报告。
+
+  结果以 SMOKE_RESULT=PASS / FAIL 结尾，供 runner 判定退出码。
+-->
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>E2E 冒烟</title></head>
+<body style="font:12px/1.5 monospace">
+<pre id="log">[start]</pre>
+<iframe id="app" src="/" style="width:420px;height:820px;border:1px solid #ccc"></iframe>
+<script>
+const ROLES = {
+  customer: {
+    label: '顾客端', phone: '13800000001', route: '/customer',
+    pages: [
+      ['顾客端首页', '/customer'],
+      ['我的订单', '/customer/orders'],
+      ['消息中心', '/customer/messages'],
+      ['我的', '/customer/profile'],
+      ['店铺详情(演示小店)', '/customer/shop/00000000-0000-4000-8000-000000000099'],
+      ['领券中心', '/customer/coupon-center'],
+    ],
+  },
+  merchant: {
+    label: '商家端', phone: '13800000002', route: '/merchant',
+    pages: [
+      ['商家首页', '/merchant'],
+      ['订单管理', '/merchant/orders'],
+      ['商品管理', '/merchant/dishes'],
+      ['店铺管理', '/merchant/shop'],
+      ['营销活动', '/merchant/marketing'],
+      ['评价管理', '/merchant/reviews'],
+      ['财务', '/merchant/finance'],
+    ],
+  },
+  rider: {
+    label: '骑手端', phone: '13800000003', route: '/rider',
+    pages: [
+      ['骑手首页', '/rider'],
+      ['抢单大厅', '/rider/hall'],
+      ['我的任务', '/rider/tasks'],
+      ['消息', '/rider/messages'],
+      ['收入记录', '/rider/record'],
+    ],
+  },
+}
+
+const out = document.getElementById('log')
+const log = (m) => { out.textContent += '\n' + m }
+const sleep = (ms) => new Promise(r => setTimeout(r, ms))
+const app = document.getElementById('app')
+const doc = () => app.contentDocument
+const win = () => app.contentWindow
+
+const roleKey = new URLSearchParams(location.search).get('_role') || 'customer'
+const ROLE = ROLES[roleKey]
+const failures = []
+const runtimeErrors = []
+const consoleErrors = []
+
+async function waitFor(fn, timeout = 20000, label = '') {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeout) {
+    try { const r = fn(); if (r) return r } catch (e) { /* not ready */ }
+    await sleep(200)
+  }
+  throw new Error('等待超时: ' + label)
+}
+const btn = (text) =>
+  [...doc().querySelectorAll('button,a')].find(e => e.textContent.trim().includes(text))
+function setInput(el, value) {
+  const w = win()
+  const setter = Object.getOwnPropertyDescriptor(w.HTMLInputElement.prototype, 'value').set
+  setter.call(el, value)
+  el.dispatchEvent(new w.Event('input', { bubbles: true }))
+}
+
+function hookErrors() {
+  try {
+    win().addEventListener('error', e => runtimeErrors.push(String(e.message || e.error || e)))
+    win().addEventListener('unhandledrejection', e => runtimeErrors.push('unhandledrejection: ' + String(e.reason)))
+    const origError = win().console.error.bind(win().console)
+    win().console.error = (...args) => { consoleErrors.push(args.map(String).join(' ')); origError(...args) }
+  } catch (e) { /* ignore */ }
+}
+
+function checkPage(name, path) {
+  win().location.hash = '#' + path
+  return sleep(2600).then(() => {
+    const text = doc().body.innerText || ''
+    const flat = text.replace(/\n+/g, ' | ')
+    const problems = []
+    if (text.includes('页面加载失败')) problems.push('落进错误兜底')
+    if (text.includes('店铺数据加载中')) problems.push('卡在店铺数据加载中')
+    if (text.includes('没有找到你的店铺')) problems.push('找不到自己的店铺')
+    if (text.includes('店铺不存在')) problems.push('店铺不存在')
+    if (text.trim().length < 20) problems.push('白屏/内容为空')
+    if (problems.length) {
+      failures.push(name + ' (' + path + '): ' + problems.join('、'))
+      log('   ❌ ' + name + ' ' + path + ' -> ' + problems.join('、'))
+      log('      页面文字: ' + flat.slice(0, 160))
+    } else {
+      log('   ✅ ' + name + ' ' + path + ' -> ' + flat.slice(0, 70))
+    }
+  })
+}
+
+;(async () => {
+  try {
+    if (!ROLE) throw new Error('未知角色: ' + roleKey)
+    log('=== ' + ROLE.label + '（' + roleKey + '）冒烟开始 ===')
+    await new Promise(r => app.addEventListener('load', r, { once: true }))
+    hookErrors()
+    await waitFor(() => doc().body.innerText.includes(ROLE.label), 20000, '启动页渲染')
+    log('① 启动页渲染正常')
+
+    btn(ROLE.label).click()
+    await waitFor(() => doc().querySelector('input[placeholder*="手机号"]'), 20000, '登录页')
+    log('② 进入登录页: ' + win().location.hash)
+
+    const pwdTab = btn('密码')
+    if (pwdTab) { pwdTab.click(); await sleep(400) }
+    setInput(doc().querySelector('input[placeholder*="手机号"]'), ROLE.phone)
+    const pwd = doc().querySelector('input[type="password"]')
+    if (!pwd) throw new Error('找不到密码输入框')
+    setInput(pwd, '123456')
+    const agree = btn('我已阅读并同意')
+    if (agree) { agree.click(); await sleep(300) }
+    const loginBtn = [...doc().querySelectorAll('button')].find(b => b.textContent.trim() === '登录')
+    if (!loginBtn) throw new Error('找不到登录按钮')
+    loginBtn.click()
+
+    const t0 = Date.now()
+    while (Date.now() - t0 < 30000) {
+      if ((win().location.hash || '').includes(ROLE.route)) break
+      await sleep(300)
+    }
+    if (!(win().location.hash || '').includes(ROLE.route)) {
+      throw new Error('登录未进入 ' + ROLE.route + '（当前 ' + win().location.hash + '）')
+    }
+    log('③ 登录成功: ' + win().location.hash)
+
+    for (const [name, path] of ROLE.pages) {
+      await checkPage(name, path)
+    }
+
+    if (runtimeErrors.length) log('⚠ 未捕获异常 ' + runtimeErrors.length + ' 条: ' + runtimeErrors.slice(0, 3).join(' / '))
+    if (consoleErrors.length) log('⚠ console.error ' + consoleErrors.length + ' 条: ' + consoleErrors.slice(0, 3).join(' / '))
+    log('=== ' + ROLE.label + ' 结果：' + (failures.length === 0 ? '全部通过' : failures.length + ' 处异常') + ' ===')
+  } catch (e) {
+    failures.push('流程异常: ' + e.message)
+    log('❌ 流程异常: ' + e.message)
+    try { log('   页面文字: ' + (doc().body.innerText || '').replace(/\n+/g, ' | ').slice(0, 200)) } catch (e2) { /* ignore */ }
+  }
+  log('SMOKE_RESULT=' + (failures.length === 0 ? 'PASS' : 'FAIL'))
+  log('[done]')
+})()
+</script>
+</body>
+</html>

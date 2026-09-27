@@ -348,7 +348,14 @@ rejected         商家拒单（终态）
 
 用户要求 AI 在今后每次修改时代为**存档并上传 GitHub**。执行口径如下：
 
-1. 改完代码先跑 `npx tsc -p tsconfig.app.json`（必须 0 错误）与 `npm run build:standalone`（必须通过）。
+1. **改完代码必须先自己跑一遍，确认真的能正常运行**（2026-09-28 用户明确要求）：
+   - `npx tsc -p tsconfig.app.json` 必须 0 错误、`npx eslint src` 必须通过；
+   - `npm run build:standalone` 必须通过；
+   - `npm run smoke`：无头 Chrome 起真机冒烟，三端各真实登录一次、逐个主要页面检查
+     「落进错误兜底 / 卡在加载 / 白屏」。**这一步不能省**——2026-09-28 的两个 bug
+     （商家端「商品管理」永远卡在加载、订单明细被重复写入）tsc / eslint / 构建**全都发现不了**，
+     只有在真浏览器里点一遍才暴露。
+   - 冒烟跑不了（没网 / 本机没有 Chrome）时**如实说明原因**，不要假装跑过。
 2. 验证通过后 `git commit` 存档，commit message 用简体中文写清改动内容。
 3. **只在「一个阶段完成且验证通过」后才 `git push`**：Cloudflare 已连 GitHub，推送到 `main` 即等于线上发布，半成品不要推。
 4. 推送后 Cloudflare 自动重新构建，约 1–3 分钟上线；上线后至少回访一次线上地址，确认能打开且标题为「饭否外卖」。
