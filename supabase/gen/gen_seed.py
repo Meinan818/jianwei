@@ -172,7 +172,7 @@ values ({q(dish_uid(no))},{q(shop_uid(99))},{q(cat_uid(cn))},{q(name)},{q(desc)}
     w("-- 领券中心 6 张平台券")
     for i,c in enumerate(coupons,1):
         w(f"""insert into public.coupons (id,name,type,value,min_amount,expire_date,scope,description,active)
-values ({q(uid(0x07,i))},{q(c['name'])},{c['type']},{c['value']},{c['min']},{q(c['exp'])},{q(c['scope'])},{q(c['desc'])},true) on conflict do nothing;""")
+values ({q(uid(0x07,i))},{q(c['name'])},{q(c['type'])},{c['value']},{c['min']},{q(c['exp'])},{q(c['scope'])},{q(c['desc'])},true) on conflict do nothing;""")
 
     w("""
 -- 自检：shops=9 / categories=26(行) / dishes=62 / coupons=6

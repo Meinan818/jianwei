@@ -299,17 +299,17 @@ insert into public.dishes (id,shop_id,category_id,name,description,price,image_u
 values ('00000000-0000-4000-8002-000000000903','00000000-0000-4000-8000-000000000099','00000000-0000-4000-8001-000000009902','双拼套餐','两款主菜任选',26,'/spark/app/app_17e3cusmabh/runtime/api/v1/storage/object/bucket_aadku6yg5emdg_static/static%2Faadku7i7kxaai_ve_miaoda',64,-1,false,true,903) on conflict do nothing;
 -- 领券中心 6 张平台券
 insert into public.coupons (id,name,type,value,min_amount,expire_date,scope,description,active)
-values ('00000000-0000-4000-8007-000000000001','新人专享券',noThreshold,5.0,0.0,'2026-12-31','全场通用','新用户专享，无门槛立减 5 元',true) on conflict do nothing;
+values ('00000000-0000-4000-8007-000000000001','新人专享券','noThreshold',5.0,0.0,'2026-12-31','全场通用','新用户专享，无门槛立减 5 元',true) on conflict do nothing;
 insert into public.coupons (id,name,type,value,min_amount,expire_date,scope,description,active)
-values ('00000000-0000-4000-8007-000000000002','满 25 减 5',fullReduce,5.0,25.0,'2026-12-31','全场通用','单笔订单满 25 元可用',true) on conflict do nothing;
+values ('00000000-0000-4000-8007-000000000002','满 25 减 5','fullReduce',5.0,25.0,'2026-12-31','全场通用','单笔订单满 25 元可用',true) on conflict do nothing;
 insert into public.coupons (id,name,type,value,min_amount,expire_date,scope,description,active)
-values ('00000000-0000-4000-8007-000000000003','满 45 减 10',fullReduce,10.0,45.0,'2026-12-31','全场通用','单笔订单满 45 元可用',true) on conflict do nothing;
+values ('00000000-0000-4000-8007-000000000003','满 45 减 10','fullReduce',10.0,45.0,'2026-12-31','全场通用','单笔订单满 45 元可用',true) on conflict do nothing;
 insert into public.coupons (id,name,type,value,min_amount,expire_date,scope,description,active)
-values ('00000000-0000-4000-8007-000000000004','满 60 减 15',fullReduce,15.0,60.0,'2026-12-31','全场通用','单笔订单满 60 元可用',true) on conflict do nothing;
+values ('00000000-0000-4000-8007-000000000004','满 60 减 15','fullReduce',15.0,60.0,'2026-12-31','全场通用','单笔订单满 60 元可用',true) on conflict do nothing;
 insert into public.coupons (id,name,type,value,min_amount,expire_date,scope,description,active)
-values ('00000000-0000-4000-8007-000000000005','8 折优惠券',discount,0.8,30.0,'2026-12-31','全场通用，最高减 20 元','单笔订单满 30 元享 8 折，最高优惠 20 元',true) on conflict do nothing;
+values ('00000000-0000-4000-8007-000000000005','8 折优惠券','discount',0.8,30.0,'2026-12-31','全场通用，最高减 20 元','单笔订单满 30 元享 8 折，最高优惠 20 元',true) on conflict do nothing;
 insert into public.coupons (id,name,type,value,min_amount,expire_date,scope,description,active)
-values ('00000000-0000-4000-8007-000000000006','无门槛 3 元券',noThreshold,3.0,0.0,'2026-12-31','全场通用','无门槛立减 3 元',true) on conflict do nothing;
+values ('00000000-0000-4000-8007-000000000006','无门槛 3 元券','noThreshold',3.0,0.0,'2026-12-31','全场通用','无门槛立减 3 元',true) on conflict do nothing;
 
 -- 自检：shops=9 / categories=26(行) / dishes=62 / coupons=6
 -- select (select count(*) from public.shops) shops,

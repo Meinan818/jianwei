@@ -34,35 +34,13 @@ create type message_type              as enum ('text','system');
 -- -----------------------------------------------------------------------------
 -- 二、通用工具函数
 -- -----------------------------------------------------------------------------
--- 自动维护 updated_at
+-- 自动维护 updated_at（纯触发器函数，不引用任何业务表，可以最先定义）
 create or replace function public.touch_updated_at()
 returns trigger language plpgsql as $$
 begin new.updated_at = now(); return new; end $$;
 
--- 当前登录用户的角色
-create or replace function public.current_role()
-returns user_role language sql stable security definer set search_path = public as $$
-  select role from public.profiles where id = auth.uid();
-$$;
-
--- 判断当前登录用户是否为某店铺店主（RLS 复用，避免重复子查询）
-create or replace function public.is_shop_owner(p_shop_id uuid)
-returns boolean language sql stable security definer set search_path = public as $$
-  select exists (
-    select 1 from public.shops s
-    where s.id = p_shop_id and s.owner_id = auth.uid()
-  );
-$$;
-
--- 判断当前用户能否看到某订单（顾客本人 / 店铺商家 / 接单骑手 / 抢单大厅里的待抢单）
-create or replace function public.can_see_order(p_order public.orders)
-returns boolean language plpgsql stable security definer set search_path = public as $$
-begin
-  return p_order.customer_id = auth.uid()
-      or public.is_shop_owner(p_order.shop_id)
-      or p_order.rider_id = auth.uid()
-      or (p_order.status = 'ready' and p_order.rider_id is null);
-end $$;
+-- 注意：current_role / is_shop_owner / can_see_order 引用了 profiles、shops、orders 三张表，
+-- 必须定义在建表之后，见下方「通用工具函数（建表后定义）」一节。
 
 -- =============================================================================
 -- 三、账号域：profiles（与 Supabase Auth 的 auth.users 1:1）
@@ -553,6 +531,40 @@ alter table public.user_coupons        enable row level security;
 alter table public.wallet_transactions enable row level security;
 alter table public.point_records       enable row level security;
 alter table public.withdraw_records    enable row level security;
+
+-- -----------------------------------------------------------------------------
+-- 通用工具函数（必须排在所有建表语句之后）
+--   PostgreSQL 在 CREATE FUNCTION 时会校验函数体与参数里引用的表/类型，因此：
+--     1) 这三个函数依赖 profiles / shops / orders，必须排在建表之后；
+--     2) 下面 is_dish_owner…can_see_order_id 那批函数又引用了 is_shop_owner，
+--        所以本段必须排在那批函数之前。
+--   顺序写错会报 `relation "public.profiles" does not exist`
+--   或 `function public.is_shop_owner(uuid) does not exist`。
+-- -----------------------------------------------------------------------------
+-- 当前登录用户的角色
+create or replace function public.current_role()
+returns user_role language sql stable security definer set search_path = public as $$
+  select role from public.profiles where id = auth.uid();
+$$;
+
+-- 判断当前登录用户是否为某店铺店主（RLS 复用，避免重复子查询）
+create or replace function public.is_shop_owner(p_shop_id uuid)
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists (
+    select 1 from public.shops s
+    where s.id = p_shop_id and s.owner_id = auth.uid()
+  );
+$$;
+
+-- 判断当前用户能否看到某订单（顾客本人 / 店铺商家 / 接单骑手 / 抢单大厅里的待抢单）
+create or replace function public.can_see_order(p_order public.orders)
+returns boolean language plpgsql stable security definer set search_path = public as $$
+begin
+  return p_order.customer_id = auth.uid()
+      or public.is_shop_owner(p_order.shop_id)
+      or p_order.rider_id = auth.uid()
+      or (p_order.status = 'ready' and p_order.rider_id is null);
+end $$;
 
 -- 子表归属判断辅助
 create or replace function public.is_dish_owner(p_dish_id uuid)

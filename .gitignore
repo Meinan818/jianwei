@@ -63,3 +63,8 @@ pnpm-lock.yaml
 
 # Agent files
 .agent/
+
+# Environment files (hardened 2026-09-27: 防止 .env / .env.production 等被提交)
+.env
+.env.*
+!.env.example
