@@ -3,6 +3,10 @@
 > 本文件是项目的**唯一权威交接说明**。仓库内旧的 `README.md`（仅技术规范）与本文件冲突时，以本文件为准。
 > 你（AI 编程助手，如 Codex）看不到原开发对话，所有上下文都在本文件和 `docs/`、`supabase/` 中。请先完整读完本文件再动手。
 
+> **品牌名约定（2026-09-27 用户拍板）**：对用户展示的品牌是「**饭否外卖**」（网页标题、启动页、三端设置页、用户协议、示例店铺名都用它）；
+> 「简味点单 / jianwei」只是**项目代号**，继续用于文件夹名、GitHub 仓库名、本文件名与内部文档。
+> 品牌名与版次集中在 `src/data/app-meta.ts`，不要在页面里再写死。
+
 ---
 
 ## 1. 项目定位（决定所有取舍）
@@ -44,7 +48,7 @@ npx tsc -p tsconfig.app.json   # 类型检查（必须 0 错误）
 1. 约 30 个 `src/` 文件引用了 `@lark-apaas/client-toolkit-lite`（平台 SDK，公开 npm 包，npm install 能拉取），但它在平台外运行时可能依赖平台环境。需要实际运行验证，必要时写一个轻量兼容层（stub）替代，**不要让整个应用依赖平台上下文才能启动**。
    **已验证结论（2026-09-27）**：**不需要写 stub**。`scopedStorage` 只是给 localStorage 加 `__miaoda_<appId>__:` 前缀，取不到 appId 时退化为 `__miaoda___global__:`，功能正常（副作用：换环境后旧的本地数据不会自动迁移）；`logger` 是 console 包装。真正需要处理的是平台注入物（HTML 占位符、外链统计脚本、妙搭水印），已由 standalone 构建模式解决，见第 5 期。
 2. 数据层当前通过平台的 scopedStorage 访问浏览器 localStorage（key 前缀形如 `__miaoda_<appId>__:`）。接入 Supabase 后将逐步替换。
-3. `index.html` 是源码模板，标题还是占位"应用标题"，并引用了平台域名的 favicon——部署前清理（标题改为"简味点单"、favicon 用本地 `/favicon.svg`、删除平台外链）。
+3. ~~`index.html` 是源码模板，标题还是占位"应用标题"，并引用了平台域名的 favicon~~ ✅ **已清理（2026-09-27）**：标题与描述改为「饭否外卖」、`lang="zh-CN"`、favicon 用本地 `/favicon.svg` 并删除平台外链、补暖橙 `theme-color`。
 
 ## 4. 当前架构（v60，必须理解后再改）
 
@@ -176,9 +180,12 @@ rejected         商家拒单（终态）
 1. 改完代码先跑 `npx tsc -p tsconfig.app.json`（必须 0 错误）与 `npm run build:standalone`（必须通过）。
 2. 验证通过后 `git commit` 存档，commit message 用简体中文写清改动内容。
 3. **只在「一个阶段完成且验证通过」后才 `git push`**：Cloudflare 已连 GitHub，推送到 `main` 即等于线上发布，半成品不要推。
-4. 推送后 Cloudflare 自动重新构建，约 1–3 分钟上线；上线后至少回访一次线上地址，确认能打开且标题为「简味点单」。
+4. 推送后 Cloudflare 自动重新构建，约 1–3 分钟上线；上线后至少回访一次线上地址，确认能打开且标题为「饭否外卖」。
 5. 每次动手前先 `git status`，若发现用户自己改的、尚未存档的内容，一并提交，**不要覆盖**。
 6. 本机 git 访问 GitHub 依赖代理配置 `http.https://github.com.proxy`（FlClash 的本地混合端口）。**代理未开启、或端口变了，推送都会失败，此时提醒用户开启代理，不要反复重试。**
    - 2026-09-27 记录：端口最初是 `7890`，后发现 FlClash 已改用 `10909`（与 Windows 系统代理设置一致），配置已更新为 `http://127.0.0.1:10909`。
    - 端口再次失效时，最快的定位方法：读注册表 `HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings` 的 `ProxyServer`（FlClash 会把自己的端口写在这里），再同步更新 git 配置；也可临时用 `git -c http.https://github.com.proxy= <命令>` 绕过代理直连试试（国内直连时通时断，不宜长期依赖）。
 7. 改动与推送的结果要主动告知用户（改了什么、线上现在是什么版本）。
+8. **每次完成改动，把 `src/data/app-meta.ts` 里的 `APP_EDITION` 加 1**（用户约定的"每改一次就变成第几版"）。
+   它同时驱动三端设置页的版本号（`APP_VERSION` = `v{APP_EDITION}.0.0`）与启动页底部彩蛋文案「大野鸡第 N 版原型演示版本」，
+   所以只需要改这一个数字，不要在各页面散写版本号。改完后线上地址会立刻反映新版次，可作为"这次改动确实上线了"的肉眼验证。

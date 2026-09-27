@@ -13,6 +13,7 @@ import { useNavigatePush, useNavigateReplace } from '@/hooks/useNavigationStack'
 import { toast } from 'sonner'
 import { scopedStorage } from '@lark-apaas/client-toolkit-lite'
 import { compressImage } from '@/lib/image'
+import { APP_BRAND, APP_VERSION, APP_YEAR } from '@/data/app-meta'
 
 const NOTIF_KEY = 'food_delivery_merchant_notif_settings'
 const THEME_KEY = 'food_delivery_theme'
@@ -139,7 +140,7 @@ export default function MerchantSettingsPage() {
       items: [
         { icon: HelpCircle, label: '帮助与反馈', onClick: () => navigatePush('/merchant/messages') },
         { icon: Shield, label: '隐私政策', onClick: () => setShowSheet('privacy') },
-        { icon: Info, label: '关于商家版', value: 'v2.0.0', onClick: () => setShowSheet('about') },
+        { icon: Info, label: '关于商家版', value: APP_VERSION, onClick: () => setShowSheet('about') },
       ],
     },
   ]
@@ -309,7 +310,7 @@ export default function MerchantSettingsPage() {
                   </>
                 ) : (
                   <>
-                    <p className="text-foreground font-medium">饭否外卖商家版 v2.0.0</p>
+                    <p className="text-foreground font-medium">{APP_BRAND}商家版 {APP_VERSION}</p>
                     <p>面向餐饮商家的一站式经营管理工具。</p>
                     <p className="text-foreground font-medium mt-2">核心功能</p>
                     <p>• 订单管理：接单、拒单、出餐、售后全流程</p>
@@ -323,7 +324,7 @@ export default function MerchantSettingsPage() {
                     <p className="text-foreground font-medium mt-2">特别说明</p>
                     <p>本应用为原型演示版本，所有交易均为模拟，不涉及真实资金往来。</p>
                     <p className="text-xs text-muted-foreground/60 mt-6 text-center">
-                      © 2025 饭否外卖商家版 · 原型演示
+                      © {APP_YEAR} {APP_BRAND}商家版 · 原型演示
                     </p>
                   </>
                 )}

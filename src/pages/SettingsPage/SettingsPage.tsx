@@ -11,6 +11,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { useNavigatePush, useNavigateReplace } from '@/hooks/useNavigationStack'
 import { toast } from 'sonner'
 import { scopedStorage } from '@lark-apaas/client-toolkit-lite'
+import { APP_BRAND, APP_VERSION, APP_YEAR } from '@/data/app-meta'
 
 const NOTIF_KEY = 'food_delivery_notif_settings'
 const THEME_KEY = 'food_delivery_theme'
@@ -196,7 +197,7 @@ export default function SettingsPage() {
         {
           icon: Info,
           label: '关于我们',
-          value: 'v2.0.0',
+          value: APP_VERSION,
           onClick: () => setShowSheet('about'),
           right: <ChevronRight className="size-4 text-muted-foreground" />,
         },
@@ -372,7 +373,7 @@ export default function SettingsPage() {
                   </>
                 ) : (
                   <>
-                    <p className="text-foreground font-medium">饭否外卖 v2.0.0</p>
+                    <p className="text-foreground font-medium">{APP_BRAND} {APP_VERSION}</p>
                     <p>一款面向用户体验演示的外卖点餐原型应用。</p>
                     <p className="text-foreground font-medium mt-2">产品特性</p>
                     <p>• 顾客端：浏览商家、在线点餐、订单跟踪、会员钱包</p>
@@ -384,7 +385,7 @@ export default function SettingsPage() {
                     <p className="text-foreground font-medium mt-2">特别说明</p>
                     <p>本应用为原型演示版本，所有交易、配送均为模拟，不涉及真实支付与服务。</p>
                     <p className="text-xs text-muted-foreground/60 mt-6 text-center">
-                      © 2025 饭否外卖 · 原型演示
+                      © {APP_YEAR} {APP_BRAND} · 原型演示
                     </p>
                   </>
                 )}

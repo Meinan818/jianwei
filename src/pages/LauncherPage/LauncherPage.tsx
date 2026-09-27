@@ -4,6 +4,7 @@ import { useNavigateReplace } from '@/hooks/useNavigationStack'
 import { useAuth } from '@/hooks/useAuth'
 import { toast } from 'sonner'
 import { Image } from '@/components/ui/image'
+import { editionLabel } from '@/data/app-meta'
 
 /**
  * App 启动选择器：相当于手机桌面，三个独立 App 入口。
@@ -138,7 +139,8 @@ export default function LauncherPage() {
 
       {/* 底部版权 */}
       <div className="pb-[calc(0.5rem+env(safe-area-inset-bottom))] text-center">
-        <p className="text-[10px] text-muted-foreground/60">大野鸡第二版原型演示版本</p>
+        {/* 彩蛋文案：版次由 src/data/app-meta.ts 的 APP_EDITION 驱动，每完成一次改动 +1 */}
+        <p className="text-[10px] text-muted-foreground/60">大野鸡{editionLabel()}原型演示版本</p>
       </div>
     </div>
   )

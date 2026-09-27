@@ -80,7 +80,7 @@ export const MOCK_WALLET_RECORDS: IWalletRecord[] = [
     amount: -28.5,
     balanceAfter: 2.8,
     title: '订单支付',
-    desc: '简味点单',
+    desc: '饭否外卖',
     createdAt: Date.now() - 86400000 * 1,
     orderId: 'ORD2025091000001',
   },
