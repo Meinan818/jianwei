@@ -42,6 +42,7 @@ npx tsc -p tsconfig.app.json   # 类型检查（必须 0 错误）
 已知平台耦合点（迁移期需要处理）：
 
 1. 约 30 个 `src/` 文件引用了 `@lark-apaas/client-toolkit-lite`（平台 SDK，公开 npm 包，npm install 能拉取），但它在平台外运行时可能依赖平台环境。需要实际运行验证，必要时写一个轻量兼容层（stub）替代，**不要让整个应用依赖平台上下文才能启动**。
+   **已验证结论（2026-09-27）**：**不需要写 stub**。`scopedStorage` 只是给 localStorage 加 `__miaoda_<appId>__:` 前缀，取不到 appId 时退化为 `__miaoda___global__:`，功能正常（副作用：换环境后旧的本地数据不会自动迁移）；`logger` 是 console 包装。真正需要处理的是平台注入物（HTML 占位符、外链统计脚本、妙搭水印），已由 standalone 构建模式解决，见第 5 期。
 2. 数据层当前通过平台的 scopedStorage 访问浏览器 localStorage（key 前缀形如 `__miaoda_<appId>__:`）。接入 Supabase 后将逐步替换。
 3. `index.html` 是源码模板，标题还是占位"应用标题"，并引用了平台域名的 favicon——部署前清理（标题改为"简味点单"、favicon 用本地 `/favicon.svg`、删除平台外链）。
 
@@ -135,7 +136,13 @@ rejected         商家拒单（终态）
 - **第 2 期（业务数据）**：把 shops / shop_settings / categories / dishes / orders / order_items / addresses / messages / reviews / coupons / 会员钱包 / notifications 从 localStorage 逐步改为 Supabase 查询。**开工前先以当前前端源码为准做一次字段对账**：前端数据模型（见第 4 节，尤其 9 态订单枚举、会话 id 模型、未读三字段）与 SQL 表结构有差异时，新增 ALTER migration 补齐，不要推翻已有 24 张表。
 - **第 3 期（Realtime）**：用 Realtime 订阅替换 CustomEvent/storage 监听，实现订单状态、IM 消息、骑手位置三端实时同步。
 - **第 4 期（Storage，可选）**：用户头像、评价图、商家换图改为 Supabase Storage 上传（替换 base64）。11 张菜品图已在本地 `public/images`，可继续保留。
-- **第 5 期（Cloudflare Pages 部署）**：代码推 GitHub → Cloudflare Pages 连仓库自动构建（框架选 Vite、输出目录 dist）→ 配置环境变量 `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` → 加 `public/_redirects` 文件，内容为 `/* /index.html 200`（否则刷新子页 404）→ 验证 HTTPS 可访问、刷新不 404、三端走单链路通。
+- **第 5 期（Cloudflare Pages 部署）**：✅ **已完成（2026-09-27）**，线上地址 https://jianwei-57i.pages.dev/
+  - 代码托管：GitHub 私有仓库 `https://github.com/Meinan818/jianwei`（私有，Cloudflare 已授权）。私有不影响部署；若要作品集公开，去仓库 Settings → Danger Zone 改可见性。
+  - **实际构建口径（与原计划不同，以此为准）**：Build command = `npm run build:standalone`、Build output directory = `dist/client`、Production branch = `main`、Framework preset = `None`、环境变量留空（接完 Supabase 再补 `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`）。
+  - **严禁让 Cloudflare 用 `npm run build`**：那是平台包装脚本，产物含 `{{appName}}` 占位符、外链统计脚本与妙搭水印，对外不可用。对外部署一律 `npm run build:standalone`。
+  - `public/_redirects`（`/* /index.html 200`）已加入，实测直接访问 `/customer/orders`、`/merchant/orders` 均返回 200 而非 404。
+  - Node 版本由仓库根目录 `.nvmrc`（22.16.0）固定，与 Cloudflare 构建镜像默认版本一致；Vite 8 要求 `^20.19.0 || >=22.12.0`。
+  - 部署后已验证：HTTP 200、标题「简味点单」、无 HBS 占位符、无妙搭水印、无 Slardar/Tea 外链统计脚本、单个 JS chunk、真实浏览器渲染出三端选择器。
 
 ### Supabase / Cloudflare 事实与注意
 
@@ -153,7 +160,19 @@ rejected         商家拒单（终态）
 ## 8. 对 AI 编程助手的工作要求
 
 - 先读完本文件，涉及数据库时读 `supabase/migrations/` 两个 SQL，涉及控制台操作读 `docs/Supabase控制台操作清单.md`。
-- 每完成一个改动：`npx tsc -p tsconfig.app.json` 必须 0 错误、`npx vite build` 必须通过，再 git commit；commit message 用简体中文，写清改动。
+- 每完成一个改动：`npx tsc -p tsconfig.app.json` 必须 0 错误、`npm run build:standalone` 必须通过，再 git commit；commit message 用简体中文，写清改动。
 - 不要擅自引入新依赖、更换技术栈、改变视觉风格；不要做一账号多店；不要恢复自动回复。
 - 遇到必须由人工完成的步骤（注册 Supabase、拿密钥、Cloudflare 登录），明确列出操作步骤让用户做，不要假装完成。
 - 保持暖橙品牌、克制动画、移动端竖屏、简体中文。
+
+### 8.1 存档 / 推送 / 部署的固定节奏（2026-09-27 与用户约定）
+
+用户要求 AI 在今后每次修改时代为**存档并上传 GitHub**。执行口径如下：
+
+1. 改完代码先跑 `npx tsc -p tsconfig.app.json`（必须 0 错误）与 `npm run build:standalone`（必须通过）。
+2. 验证通过后 `git commit` 存档，commit message 用简体中文写清改动内容。
+3. **只在「一个阶段完成且验证通过」后才 `git push`**：Cloudflare 已连 GitHub，推送到 `main` 即等于线上发布，半成品不要推。
+4. 推送后 Cloudflare 自动重新构建，约 1–3 分钟上线；上线后至少回访一次线上地址，确认能打开且标题为「简味点单」。
+5. 每次动手前先 `git status`，若发现用户自己改的、尚未存档的内容，一并提交，**不要覆盖**。
+6. 本机 git 访问 GitHub 依赖代理配置 `http.https://github.com.proxy = http://127.0.0.1:7890`（FlClash）。**代理未开启时推送会失败，此时提醒用户开启，不要反复重试。**
+7. 改动与推送的结果要主动告知用户（改了什么、线上现在是什么版本）。
