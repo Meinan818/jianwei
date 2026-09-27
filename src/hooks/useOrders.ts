@@ -122,7 +122,11 @@ function normalizeOrders(raw: any[]): IOrder[] {
 
 // ========== 超时常量（统一管理，便于修改） ==========
 export const PAY_TIMEOUT_MS = 15 * 60 * 1000       // 待支付 15 分钟
-export const MERCHANT_ACCEPT_TIMEOUT_MS = 3 * 60 * 1000 // 商家接单 3 分钟（演示用，正式口径 15 分钟）
+// 商家接单超时：现场演示要切端、讲解，3 分钟容易在讲别的功能时误触发
+// 顾客端「商家暂未接单，您可催单或取消订单」提示条与商家端「已超时」标签，看着像系统出问题。
+// 放宽到 8 分钟作为演示保险；要专门演示「超时提醒」这个功能时，
+// 把这里临时改成 20 * 1000（20 秒）即可，改完记得跑一次构建。
+export const MERCHANT_ACCEPT_TIMEOUT_MS = 8 * 60 * 1000 // 商家接单 8 分钟（正式口径 15 分钟）
 
 // 触发订单变更事件（同一页面内多组件 hook 实例同步）
 function notifyOrdersChange() {
