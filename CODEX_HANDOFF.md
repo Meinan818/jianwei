@@ -178,5 +178,7 @@ rejected         商家拒单（终态）
 3. **只在「一个阶段完成且验证通过」后才 `git push`**：Cloudflare 已连 GitHub，推送到 `main` 即等于线上发布，半成品不要推。
 4. 推送后 Cloudflare 自动重新构建，约 1–3 分钟上线；上线后至少回访一次线上地址，确认能打开且标题为「简味点单」。
 5. 每次动手前先 `git status`，若发现用户自己改的、尚未存档的内容，一并提交，**不要覆盖**。
-6. 本机 git 访问 GitHub 依赖代理配置 `http.https://github.com.proxy = http://127.0.0.1:7890`（FlClash）。**代理未开启时推送会失败，此时提醒用户开启，不要反复重试。**
+6. 本机 git 访问 GitHub 依赖代理配置 `http.https://github.com.proxy`（FlClash 的本地混合端口）。**代理未开启、或端口变了，推送都会失败，此时提醒用户开启代理，不要反复重试。**
+   - 2026-09-27 记录：端口最初是 `7890`，后发现 FlClash 已改用 `10909`（与 Windows 系统代理设置一致），配置已更新为 `http://127.0.0.1:10909`。
+   - 端口再次失效时，最快的定位方法：读注册表 `HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings` 的 `ProxyServer`（FlClash 会把自己的端口写在这里），再同步更新 git 配置；也可临时用 `git -c http.https://github.com.proxy= <命令>` 绕过代理直连试试（国内直连时通时断，不宜长期依赖）。
 7. 改动与推送的结果要主动告知用户（改了什么、线上现在是什么版本）。
