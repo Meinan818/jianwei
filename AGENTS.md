@@ -28,12 +28,12 @@
 
 | 项 | 现状 |
 |---|---|
-| 线上站点 | **第七版**（构建自 `4b43f14`）——跨设备看新订单/新消息**仍需刷新** |
-| 本地 `main` | **第八版**代码已 commit，**领先 `origin/main`、尚未 push** |
-| 关键提交 | `3a9d6b1` 第 3 期实时推送（含其后的交接文档更新提交） |
+| 线上站点 | **第九版**（实时推送 + 地址上云已上线；第八版起跨设备看新订单/新消息**不用刷新**） |
+| 本地 `main` | 与 `origin/main` 同步 |
+| 关键提交 | `3a9d6b1` 第 3 期实时推送；2d 地址上云（第九版） |
 | 已在真机验证 | `node scripts/verify-realtime.mjs`：顾客改单 → 商家端不刷新即收到 |
 | 尚未验证 | 浏览器里的实际观感（两台设备开着页面互看） |
-| 待人工操作 | ① 在 Supabase 跑 `20260927000000_realtime_conversations.sql`；② 决定是否 push 上线 |
+| 待人工操作 | 在 Supabase 跑 `20260927000000_realtime_conversations.sql`（不跑不影响订单/消息实时，仅会话已读/新会话不实时） |
 
 > 开工前若发现本地还有**未 push 的提交**，先跟用户确认要不要推，不要把半成品直接推上线。
 
@@ -219,7 +219,14 @@ rejected         商家拒单（终态）
     - 消息 id 也改为 uuid（数据库 `messages.id` 是 uuid）。
     - ⚠️ **限制**：内置演示店（owner_id 为空）没有对应商家账号，这类咨询会话无法入库，保持纯本地；
       跨设备聊天只对「店铺有真实归属」的会话生效（当前即演示商家自己的「演示小店」）。
-  - ⏳ **未做**：评价 / 优惠券 / 钱包 / 地址的读写迁移；售后退款与配送异常的单独写表。
+  - ✅ **2d 地址上云已完成（2026-09-27）**：新增 `src/data/addresses-remote.ts`，`useAddresses` 对外接口不变（CheckoutPage / ProfilePage 零改动）。
+    - 字段对账：前端 `IAddress` 与 `addresses` 表一一对应（`address_tag` 枚举值 `home/company/school/none` 两边一致），无需补 ALTER。
+    - 登录后从数据库拉一遍（RLS `addresses_owner` 限定本人），增删改按行直接写库；
+      未配置 / 未登录 / 读写失败时静默退回原 localStorage + `MOCK_ADDRESSES` 行为。
+    - ⚠️ 数据库有「每账号至多一个默认地址」的部分唯一索引 `addresses_one_default`：**设默认必须先清旧默认再写新默认**，顺序不能反。
+    - ⚠️ 登录后地址列表为空是**正常初始状态**（seed 不预置地址，由用户真实添加，跨设备可见）；`MOCK_ADDRESSES` 只在未登录 / 无数据库时兜底展示，不写库。
+    - 地址只在顾客端用、无跨端联动需求，**不进 Realtime publication**。
+  - ⏳ **未做**：评价 / 优惠券 / 钱包的读写迁移；售后退款与配送异常的单独写表。
     注意：**前端内置演示数据的店铺 id 是 `'1'`~`'8'`，数据库是 UUID**——2b 做下单时必须用数据库 id，
     否则订单会引用到不存在的店铺。
 - **第 3 期（Realtime）**：✅ **代码已完成（2026-09-27）**，订单状态与 IM 消息跨设备实时同步。
@@ -293,6 +300,9 @@ rejected         商家拒单（终态）
 5. 每次动手前先 `git status`，若发现用户自己改的、尚未存档的内容，一并提交，**不要覆盖**。
 6. 本机 git 访问 GitHub 依赖代理配置 `http.https://github.com.proxy`（FlClash 的本地混合端口）。**代理未开启、或端口变了，推送都会失败，此时提醒用户开启代理，不要反复重试。**
    - 2026-09-27 记录：端口最初是 `7890`，后发现 FlClash 已改用 `10909`（与 Windows 系统代理设置一致），配置已更新为 `http://127.0.0.1:10909`。
+   - 2026-09-27 补充：FlClash **开 TUN 模式时**系统代理是关闭的（注册表 `ProxyEnable=0`）、也没有任何 HTTP 代理端口在监听（核心进程只监听 53 做 DNS），
+     此时 git 里配置的代理端口必然连不上——先查 FlClash 当前模式；TUN 模式下用
+     `git -c http.https://github.com.proxy= push` 绕过代理直连即可（TUN 会接管流量）。
    - 端口再次失效时，最快的定位方法：读注册表 `HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings` 的 `ProxyServer`（FlClash 会把自己的端口写在这里），再同步更新 git 配置；也可临时用 `git -c http.https://github.com.proxy= <命令>` 绕过代理直连试试（国内直连时通时断，不宜长期依赖）。
 7. 改动与推送的结果要主动告知用户（改了什么、线上现在是什么版本）。
 8. **每完成一次「迭代」后，把 `src/data/app-meta.ts` 里的 `APP_EDITION` 加 1**（用户约定的"每次迭代再改"）。
