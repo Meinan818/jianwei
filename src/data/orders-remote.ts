@@ -22,6 +22,7 @@ const num = (v: unknown, fallback = 0): number => {
 }
 const ts = (v: unknown): number | undefined => (v ? Date.parse(String(v)) : undefined)
 const iso = (v: number | undefined): string | null => (v ? new Date(v).toISOString() : null)
+const isUuid = (v: string) => /^[0-9a-f-]{36}$/i.test(v)
 
 /** 数据库行（orders + order_items + 售后 + 异常）→ 前端 IOrder */
 export function rowToOrder(
@@ -109,7 +110,8 @@ export function rowToOrder(
             createdAt: ts(refund.created_at) ?? Date.now(),
             handledAt: ts(refund.handled_at),
             ...(refund.handle_remark ? { handleRemark: refund.handle_remark } : {}),
-            ...(refund.handled_by ? { handledBy: refund.handled_by } : {}),
+            // handled_by 列是 uuid（处理人用户 id），不要当昵称展示——昵称走 handle_remark/本地
+            ...(refund.handled_by ? { handledById: refund.handled_by } : {}),
           } as IRefundRequest,
         }
       : {}),
@@ -270,6 +272,55 @@ export async function upsertOrder(order: IOrder): Promise<boolean> {
         if (missing.length > 0) {
           const { error: insErr } = await sb.from('order_items').insert(missing)
           if (insErr) console.warn('[orders] 写入订单明细失败', order.id, insErr.message)
+        }
+      }
+    }
+    // ---- 第 2 期 2e：售后退款单独写表（order_id 唯一：先插、冲突再改，处理结果更新走后者）----
+    if (order.refundRequest && isUuid(order.refundRequest.id)) {
+      const rf = order.refundRequest
+      const rfRow = {
+        order_id: order.id,
+        shop_id: order.shopId,
+        customer_id: order.customerId,
+        reason: rf.reason ?? '',
+        description: rf.description ?? '',
+        amount: rf.amount,
+        status: rf.status,
+        created_at: iso(rf.createdAt),
+        handled_at: iso(rf.handledAt),
+        handle_remark: rf.handleRemark ?? null,
+        handled_by: rf.handledById && isUuid(rf.handledById) ? rf.handledById : null,
+      }
+      const rfIns = await sb.from('refund_requests').insert(rfRow)
+      if (rfIns.error) {
+        if (rfIns.error.code === '23505') {
+          const rfUpd = await sb.from('refund_requests').update(rfRow).eq('order_id', order.id)
+          if (rfUpd.error) console.warn('[orders] 更新售后退款失败', order.id, rfUpd.error.message)
+        } else {
+          console.warn('[orders] 写入售后退款失败', order.id, rfIns.error.message)
+        }
+      }
+    }
+    // ---- 第 2 期 2e：配送异常单独写表（id 是 uuid 主键，重复插入按 23505 跳过）----
+    if (order.deliveryExceptions?.length) {
+      for (const ex of order.deliveryExceptions) {
+        if (!isUuid(ex.id)) continue // 旧本地数据（EX+时间戳）不入库
+        const exRow = {
+          id: ex.id,
+          order_id: order.id,
+          type: ex.type,
+          description: ex.description ?? '',
+          reported_by: ex.reportedBy ?? 'rider',
+          reporter_id: ex.reporterId && isUuid(ex.reporterId) ? ex.reporterId : null, // 骑手工号不是 uuid，置空
+          reporter_name: ex.reporterName ?? null,
+          resolved: Boolean(ex.resolved),
+          resolved_at: iso(ex.resolvedAt),
+          resolution: ex.resolution ?? null,
+          created_at: iso(ex.createdAt),
+        }
+        const exIns = await sb.from('delivery_exceptions').insert(exRow)
+        if (exIns.error && exIns.error.code !== '23505') {
+          console.warn('[orders] 写入配送异常失败', ex.id, exIns.error.message)
         }
       }
     }

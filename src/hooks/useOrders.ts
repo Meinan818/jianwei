@@ -685,7 +685,7 @@ export function useOrders() {
       const updated = prev.map(o => {
         if (o.id !== orderId) return o
         const exception: IDeliveryException = {
-          id: `EX${Date.now()}`,
+          id: newOrderId(), // 第 2 期 2e：delivery_exceptions.id 是 uuid
           orderId,
           type: params.type,
           description: params.description,
@@ -1016,7 +1016,7 @@ export function useOrders() {
         if (o.status === 'cancelled' || o.status === 'rejected') return o
         if (o.refundRequest && o.refundRequest.status !== 'rejected') return o
         const request: IRefundRequest = {
-          id: `RF${Date.now()}`,
+          id: newOrderId(), // 第 2 期 2e：refund_requests.id 是 uuid
           orderId,
           shopId: o.shopId,
           customerId: o.customerId,
@@ -1036,12 +1036,13 @@ export function useOrders() {
     return created
   }, [])
 
-  // 商家：处理售后退款（同意/拒绝）
+  // 商家：处理售后退款（同意/拒绝）。handlerId 是处理人登录 id（uuid，单独写数据库 handled_by 列）
   const handleRefund = useCallback((
     orderId: string,
     action: 'approve' | 'reject',
     remark: string,
     handlerName: string,
+    handlerId?: string,
   ): IRefundRequest | null => {
     let updated: IRefundRequest | null = null
     setOrders(prev => {
@@ -1054,6 +1055,7 @@ export function useOrders() {
           handledAt: Date.now(),
           handleRemark: remark,
           handledBy: handlerName,
+          ...(handlerId ? { handledById: handlerId } : {}),
         }
         updated = newReq
         return { ...o, refundRequest: newReq }

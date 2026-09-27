@@ -96,7 +96,7 @@ export default function MerchantOrdersPage() {
 
   const submitRefundHandle = () => {
     if (!refundHandleId) return
-    const result = handleRefund(refundHandleId, refundHandleAction, refundHandleRemark, user.nickname || '商家')
+    const result = handleRefund(refundHandleId, refundHandleAction, refundHandleRemark, user.nickname || '商家', user.id)
     if (result) {
       toast.success(refundHandleAction === 'approve' ? '已同意退款' : '已拒绝退款')
       setRefundHandleId(null)

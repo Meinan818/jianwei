@@ -5,6 +5,7 @@ import { ChevronLeft, Star, Send, CheckCircle, X, Image as ImageIcon, EyeOff } f
 import { useOrders } from '@/hooks/useOrders'
 import { useReviews } from '@/hooks/useReviews'
 import { useUser } from '@/hooks/useUser'
+import { useAuth } from '@/hooks/useAuth'
 import { usePageBack, useNavigateReplace } from '@/hooks/useNavigationStack'
 import { toast } from 'sonner'
 import { Image } from '@/components/ui/image'
@@ -20,6 +21,8 @@ export default function ReviewPage() {
   const { getOrder, markReviewed } = useOrders()
   const { addReview, getReviewByOrder } = useReviews()
   const { user } = useUser()
+  // 评价归属需要真实的登录身份 id（数据库 customer_id = auth.uid()）；user 只有昵称/头像
+  const { user: authUser } = useAuth()
 
   const searchParams = new URLSearchParams(location.search)
   const orderId = searchParams.get('orderId') || ''
@@ -140,7 +143,7 @@ export default function ReviewPage() {
       addReview({
         orderId: order.id,
         shopId: order.shopId,
-        userId: 'user1',
+        userId: authUser.id,
         userName: anonymous ? '匿名用户' : user.nickname,
         userAvatar: anonymous ? '' : user.avatar,
         overallScore: overall,

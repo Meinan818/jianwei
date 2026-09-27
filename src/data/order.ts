@@ -65,7 +65,8 @@ export interface IRefundRequest {
   createdAt: number       // 申请时间
   handledAt?: number      // 处理时间
   handleRemark?: string   // 商家处理备注
-  handledBy?: string      // 处理人
+  handledBy?: string      // 处理人（昵称，界面展示用）
+  handledById?: string    // 处理人用户 id（uuid，写数据库 handled_by 列；第 2 期 2e）
 }
 
 export interface IOrderStatusNode {
