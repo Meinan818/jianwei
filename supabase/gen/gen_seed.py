@@ -126,19 +126,18 @@ def main():
         app_meta = '{"provider":"email","providers":["email"]}'
         user_meta = f'{{"role":"{role}","nickname":"{nick}","phone":"{phone}"}}'
         ident = f'{{"sub":"{uid_}","email":"{email}"}}'
-        w(f"""insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,raw_app_meta_data,raw_user_meta_data)
+        w(f"""-- 演示账号 {phone}
+insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,raw_app_meta_data,raw_user_meta_data)
 values ('00000000-0000-0000-0000-000000000000',{q(uid_)}::uuid,'authenticated','authenticated',{q(email)},crypt('123456',gen_salt('bf')),now(),now(),now(),{q(app_meta)}::jsonb,{q(user_meta)}::jsonb)
 on conflict (id) do nothing;
+-- 幂等修正：早期版本用过「纯数字本地部分」的邮箱，Supabase 不接受，这里统一纠正
+update auth.users set email = {q(email)}, raw_user_meta_data = {q(user_meta)}::jsonb where id = {q(uid_)}::uuid;
+-- 身份行必须「先删后插」：provider_id 上有唯一约束，
+-- 若先插入新行再把旧行改成同一 provider_id，会撞 identities_provider_id_provider_unique。
+delete from auth.identities where user_id = {q(uid_)}::uuid;
 insert into auth.identities (provider_id,user_id,identity_data,provider,last_sign_in_at,created_at,updated_at)
-values ({q(email)},{q(uid_)}::uuid,{q(ident)}::jsonb,'email',now(),now(),now()) on conflict do nothing;""")
+values ({q(email)},{q(uid_)}::uuid,{q(ident)}::jsonb,'email',now(),now(),now());""")
 
-    w("-- 幂等修正：早期版本的 `{手机号}@jianwei.app` 会被 Supabase 判为无效邮箱（本地部分纯数字），")
-    w("-- 重跑本 seed 时把已存在的旧邮箱一并纠正，无需手工清理。")
-    for uid_, email, role, nick, phone in demo_users:
-        user_meta = f'{{"role":"{role}","nickname":"{nick}","phone":"{phone}"}}'
-        ident = f'{{"sub":"{uid_}","email":"{email}"}}'
-        w(f"""update auth.users set email = {q(email)}, raw_user_meta_data = {q(user_meta)}::jsonb where id = {q(uid_)}::uuid;
-update auth.identities set provider_id = {q(email)}, identity_data = {q(ident)}::jsonb where user_id = {q(uid_)}::uuid;""")
     w("update public.profiles set is_online=true where id='10000000-0000-4000-8000-000000000003'::uuid;\n")
 
     w("-- 8 家内置演示店（is_demo=true，owner 为空，所有人只读）")

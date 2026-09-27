@@ -59,7 +59,11 @@ create table auth.identities (
   provider        text,
   last_sign_in_at timestamptz,
   created_at      timestamptz,
-  updated_at      timestamptz
+  updated_at      timestamptz,
+  -- 与真实 Supabase 一致的两个唯一约束：
+  -- 少了它们，seed 里「先插新行再改旧行」这类冲突在本地就复现不出来（曾经因此漏检一次）。
+  constraint identities_provider_id_provider_unique unique (provider_id, provider),
+  constraint identities_user_id_provider_unique     unique (user_id, provider)
 );
 
 create or replace function auth.uid() returns uuid language sql stable as $fn$ select null::uuid $fn$;
@@ -154,15 +158,19 @@ for (let idx = 0; idx < stmts.length; idx++) {
 }
 if (initOk) console.log('✅ init_schema 全部语句执行通过');
 
-// ── 4. 跑 seed ───────────────────────────────────────────────────────────
+  // ── 4. 跑 seed（连续跑两遍，第二遍同时验证「可重复执行」） ────────────────
 if (initOk) {
-  console.log('\n── 4. 执行 20260915010000_seed_demo.sql ──');
-  try {
-    await db.exec(fs.readFileSync(SEED, 'utf8'));
-    console.log('✅ seed 执行通过');
-  } catch (e) {
-    console.log('❌ seed 失败：\n' + e.message);
-  }
+    const seedSql = fs.readFileSync(SEED, 'utf8');
+    for (const round of [1, 2]) {
+      console.log(`\n── 4.${round} 执行 20260915010000_seed_demo.sql（第 ${round} 遍） ──`);
+      try {
+        await db.exec(seedSql);
+        console.log(round === 1 ? '✅ seed 执行通过' : '✅ seed 重复执行通过（幂等）');
+      } catch (e) {
+        console.log(`❌ seed 第 ${round} 遍失败：\n` + e.message);
+        break;
+      }
+    }
 
   // ── 5. 自检数字 ────────────────────────────────────────────────────────
   console.log('\n── 5. 自检（期望 shops 9 / categories 26 / dishes 62 / coupons 6 / users 3）──');
