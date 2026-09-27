@@ -41,6 +41,14 @@ select
   (select count(*) from auth.users) as 演示账号;       -- 应为 3
 ```
 
+> **重复执行**：init 脚本里的枚举类型已做存在性判断，重跑不会因残留类型报错。
+> 若仍提示表已存在（说明上次执行到中途），在 SQL Editor 里跑一次下面的清理再重跑两个文件：
+> ```sql
+> drop schema public cascade;
+> create schema public;
+> grant usage on schema public to anon, authenticated, service_role;
+> ```
+
 ## ③ 关闭邮箱验证（约 1 分钟）
 
 - [ ] 左侧 **Authentication** → **Sign In / Providers** → **Email**
@@ -72,6 +80,17 @@ select
 
 > ⚠️ 部署前记得在 Cloudflare 的 **Settings → Environment variables** 里补上
 > `VITE_SUPABASE_URL` 与 `VITE_SUPABASE_ANON_KEY`，否则线上版本连不上数据库。
+
+## ⑦ 演示账号（跑完 seed 后即可使用）
+
+| 端 | 登录手机号 | 密码 |
+|---|---|---|
+| 顾客端 | `13800000001` | `123456` |
+| 商家端 | `13800000002` | `123456` |
+| 骑手端 | `13800000003` | `123456` |
+
+登录页填**手机号**即可；程序内部会把它映射成 `{手机号}@jianwei.app` 的合成邮箱去调 Supabase 认证，
+所以**不需要真实邮箱、也不会发任何邮件**。
 
 ## 常见疑问
 

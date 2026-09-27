@@ -10,7 +10,11 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 SHOPS_TS = (ROOT / "src/data/shops.ts").read_text(encoding="utf-8")
 COUPON_TS = (ROOT / "src/data/coupon.ts").read_text(encoding="utf-8")
 
-img_base = re.search(r"const IMG_BASE = '([^']+)'", SHOPS_TS).group(1)
+# 前端已把 IMG_BASE 改成 `(import.meta.env.BASE_URL || '/') + 'images/'` 这种拼接写法，
+# 不再是字符串字面量。数据库里存站点根相对路径即可（图片由站点自身 /images/ 提供），
+# 这样脱离原托管平台后不会变成死链。
+_m = re.search(r"const IMG_BASE = '([^']+)'", SHOPS_TS)
+img_base = _m.group(1) if _m else "/images/"
 IMG = dict(re.findall(r"const ([BS]\d) = IMG_BASE \+ '([^']+)'", SHOPS_TS))
 def img(token): return img_base + IMG[token]
 def q(s):
@@ -104,16 +108,18 @@ def main():
     shops, coupons = parse(), parse_coupons()
     o = []
     w = o.append
-    w("-- 简味点单 · 演示数据 seed（gen_seed.py 从 v25 源码生成，勿手改）")
-    w("-- 可重复执行：固定 UUID + on conflict do nothing；执行前须先跑 01_init_schema.sql")
-    w("-- 注意：菜品图片沿用妙搭存储相对路径，最终自部署前迁移到 Storage dish-images 桶并 UPDATE")
+    w("-- 简味点单 · 演示数据 seed（由 gen_seed.py 从当前前端源码生成，勿手改）")
+    w("-- 可重复执行：固定 UUID + on conflict do nothing；执行前须先跑 20260915000000_init_schema.sql")
+    w("-- 图片为站点根相对路径 /images/xxx.jpg（前端 public/images 下的 11 张真实图片），不依赖原托管平台")
     w("begin;\n")
 
     w("-- 三个演示账号（密码均 123456），profile 由 init 的 auth 触发器自动建立")
     demo_users = [
-        ("10000000-0000-4000-8000-000000000001","demo-customer@jianwei.app","customer","演示顾客","13800000001"),
-        ("10000000-0000-4000-8000-000000000002","demo-merchant@jianwei.app","merchant","演示商家","13800000002"),
-        ("10000000-0000-4000-8000-000000000003","demo-rider@jianwei.app","rider","演示骑手小张","13800000003")]
+        # 登录走「手机号 → {手机号}@jianwei.app 合成邮箱」的映射（方案 A，2026-09-27 用户拍板），
+        # 因此账号邮箱与手机号严格对应：输入 13800000001 + 密码 123456 即是演示顾客。
+        ("10000000-0000-4000-8000-000000000001","13800000001@jianwei.app","customer","演示顾客","13800000001"),
+        ("10000000-0000-4000-8000-000000000002","13800000002@jianwei.app","merchant","演示商家","13800000002"),
+        ("10000000-0000-4000-8000-000000000003","13800000003@jianwei.app","rider","演示骑手小张","13800000003")]
     for uid_, email, role, nick, phone in demo_users:
         app_meta = '{"provider":"email","providers":["email"]}'
         user_meta = f'{{"role":"{role}","nickname":"{nick}","phone":"{phone}"}}'

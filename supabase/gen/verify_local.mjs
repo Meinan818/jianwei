@@ -20,7 +20,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+// 默认取脚本自身所在的仓库根；若把脚本复制到别处执行（例如临时目录里装了 PGlite），
+// 可把仓库路径作为第一个参数传进来：node verify_local.mjs "E:\path\to\jianwei-codex"
+const ROOT = process.argv[2]
+  ? path.resolve(process.argv[2])
+  : path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const INIT = path.join(ROOT, 'supabase/migrations/20260915000000_init_schema.sql');
 const SEED = path.join(ROOT, 'supabase/migrations/20260915010000_seed_demo.sql');
 
@@ -174,6 +178,42 @@ if (initOk) {
     console.log(r.rows[0]);
   } catch (e) {
     console.log('自检查询失败：' + e.message);
+  }
+
+  // ── 6. 冒烟测试：会话语义 id + 三端未读 + 消息外键 ──────────────────────
+  //    DDL 能执行 ≠ 设计可用。这里真的插一条会话与一条消息，验证：
+  //    conversations.id 用 text 承载前端语义 id（shop:<shopId>）、
+  //    messages.conversation_id 的 text 外键、三端未读字段可分别计数。
+  //    注意：本地以超级用户运行，RLS 策略本身不在此校验范围内。
+  console.log('\n── 6. 冒烟测试：会话与消息 ──');
+  try {
+    const CUSTOMER = '10000000-0000-4000-8000-000000000001';
+    const MERCHANT = '10000000-0000-4000-8000-000000000002';
+    const convId = 'shop:00000000-0000-4000-8000-000000000001';
+    await db.exec(`
+      insert into public.conversations
+        (id, conv_type, customer_id, merchant_id, customer_name, merchant_name, unread_customer, unread_merchant, unread_rider)
+      values
+        ('${convId}', 'shop', '${CUSTOMER}', '${MERCHANT}', '演示顾客', '演示商家', 2, 0, 0);
+
+      insert into public.messages
+        (conversation_id, sender_id, sender_role, sender_name, sender_avatar, content)
+      values
+        ('${convId}', '${MERCHANT}', 'merchant', '演示商家', null, '在的，请问需要什么？');
+
+      update public.conversations
+         set unread_customer = unread_customer + 1, last_message = '新消息', last_message_at = now()
+       where id = '${convId}';
+    `);
+    const r = await db.query(`
+      select c.id, c.conv_type, c.unread_customer, c.unread_merchant, c.unread_rider, c.last_message,
+             (select count(*) from public.messages m where m.conversation_id = c.id) as msgs
+        from public.conversations c
+    `);
+    console.log('✅ 会话语义 id / 三端未读 / 消息外键均可用');
+    console.log(r.rows[0]);
+  } catch (e) {
+    console.log('❌ 冒烟测试失败：' + e.message);
   }
 }
 

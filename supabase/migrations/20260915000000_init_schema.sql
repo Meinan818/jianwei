@@ -14,22 +14,42 @@ create extension if not exists pgcrypto;
 -- -----------------------------------------------------------------------------
 -- 一、枚举类型（与前端 src/data/*.ts 的字面量联合类型一一对应）
 -- -----------------------------------------------------------------------------
-create type user_role                as enum ('customer', 'merchant', 'rider');
-create type order_status              as enum ('pending_payment','pending','preparing','ready','picked','delivering','delivered','cancelled','rejected');
-create type refund_status             as enum ('pending','approved','rejected','processing','completed');
-create type delivery_exception_type   as enum ('customer_unreachable','merchant_slow','wrong_address','bad_weather','other');
-create type actor_role                as enum ('customer','merchant','rider','system');
-create type delivery_mode             as enum ('instant','appointment');
-create type activity_type             as enum ('fullReduce','newUser','discount','discountDish','freeDelivery');
-create type coupon_type               as enum ('fullReduce','discount','noThreshold');
-create type user_coupon_status        as enum ('claimed','used','expired');
-create type wallet_txn_type           as enum ('recharge','consume','refund','reward','withdraw','earn');
-create type point_txn_type            as enum ('earn','spend','expire');
-create type withdraw_status           as enum ('pending','success','failed');
-create type account_type              as enum ('alipay','wechat','bank');
-create type address_tag               as enum ('home','company','school','none');
-create type notification_category     as enum ('system','order','activity');
-create type message_type              as enum ('text','system');
+-- 用 DO 块做存在性判断：上一次执行中途失败时残留的枚举不会阻塞重跑
+do $$
+declare
+  r      record;
+  labels text;
+begin
+  for r in
+    select * from (values
+      ('user_role',               array['customer','merchant','rider']),
+      ('order_status',            array['pending_payment','pending','preparing','ready','picked','delivering','delivered','cancelled','rejected']),
+      ('refund_status',           array['pending','approved','rejected','processing','completed']),
+      ('delivery_exception_type', array['customer_unreachable','merchant_slow','wrong_address','bad_weather','other']),
+      ('actor_role',              array['customer','merchant','rider','system']),
+      ('delivery_mode',           array['instant','appointment']),
+      ('activity_type',           array['fullReduce','newUser','discount','discountDish','freeDelivery']),
+      ('coupon_type',             array['fullReduce','discount','noThreshold']),
+      ('user_coupon_status',      array['claimed','used','expired']),
+      ('wallet_txn_type',         array['recharge','consume','refund','reward','withdraw','earn']),
+      ('point_txn_type',          array['earn','spend','expire']),
+      ('withdraw_status',         array['pending','success','failed']),
+      ('account_type',            array['alipay','wechat','bank']),
+      ('address_tag',             array['home','company','school','none']),
+      ('notification_category',   array['system','order','activity']),
+      ('message_type',            array['text','system'])
+    ) as t(name, labels)
+  loop
+    if not exists (
+      select 1 from pg_type ty
+      join pg_namespace n on n.oid = ty.typnamespace
+      where n.nspname = 'public' and ty.typname = r.name
+    ) then
+      select string_agg(quote_literal(l), ', ') into labels from unnest(r.labels) as l;
+      execute 'create type public.' || quote_ident(r.name) || ' as enum (' || labels || ')';
+    end if;
+  end loop;
+end $$;
 
 -- -----------------------------------------------------------------------------
 -- 二、通用工具函数
@@ -366,15 +386,31 @@ create index footprints_user_idx on public.footprints(user_id, visited_at desc);
 -- =============================================================================
 -- 七、互动域：conversations / messages / reviews / notifications
 -- =============================================================================
+-- 会话：主键沿用前端的语义 id 约定（shop:<shopId> / om:<orderId> / or:<x> / rm:<x>），
+-- 因此用 text 而不是 uuid——避免前后端维护两套 id 再互相映射。
 create table public.conversations (
-  id             uuid primary key default gen_random_uuid(),
-  order_id       uuid references public.orders(id) on delete set null, -- 下单前咨询可为空
-  customer_id    uuid not null references public.profiles(id),
-  merchant_id    uuid not null references public.profiles(id),
-  rider_id       uuid references public.profiles(id),
-  last_message   text,
-  last_message_at timestamptz,
-  created_at     timestamptz not null default now()
+  id               text primary key,
+  conv_type        text not null default 'order' check (conv_type in ('order','shop')),
+  order_id         uuid references public.orders(id) on delete set null, -- 下单前咨询可为空
+  customer_id      uuid not null references public.profiles(id),
+  merchant_id      uuid not null references public.profiles(id),
+  rider_id         uuid references public.profiles(id),
+  -- 参与方身份快照：对方改名/换头像后，历史会话仍显示当时的称呼
+  customer_name    text,
+  customer_avatar  text,
+  merchant_name    text,
+  merchant_avatar  text,
+  rider_name       text,
+  rider_avatar     text,
+  -- 最后一条消息摘要（列表页直接读，不用 join messages）
+  last_message     text,
+  last_message_at  timestamptz,
+  -- 未读按参与方分别计数：与前端 unreadCustomer / unreadMerchant / unreadRider 一一对应。
+  -- 原设计只有一个 messages.is_read 布尔值，无法表达「同一会话里顾客未读 2 条、商家未读 0 条」。
+  unread_customer  integer not null default 0 check (unread_customer >= 0),
+  unread_merchant  integer not null default 0 check (unread_merchant >= 0),
+  unread_rider     integer not null default 0 check (unread_rider >= 0),
+  created_at       timestamptz not null default now()
 );
 create index conversations_customer_idx on public.conversations(customer_id, last_message_at desc);
 create index conversations_merchant_idx on public.conversations(merchant_id, last_message_at desc);
@@ -382,10 +418,11 @@ create index conversations_rider_idx    on public.conversations(rider_id, last_m
 
 create table public.messages (
   id               uuid primary key default gen_random_uuid(),
-  conversation_id  uuid not null references public.conversations(id) on delete cascade,
+  conversation_id  text not null references public.conversations(id) on delete cascade,
   sender_id        uuid not null references public.profiles(id),
   sender_role      actor_role not null,     -- 快照角色，避免头像/名称随资料变
   sender_name      text,
+  sender_avatar    text,                    -- 快照头像（对应前端 IMessage.senderAvatar）
   content          text not null,
   msg_type         message_type not null default 'text',
   is_read          boolean not null default false,
@@ -595,7 +632,7 @@ returns boolean language sql stable security definer set search_path = public as
     )
   );
 $$;
-create or replace function public.is_conversation_participant(p_conv uuid)
+create or replace function public.is_conversation_participant(p_conv text)
 returns boolean language sql stable security definer set search_path = public as $$
   select exists (
     select 1 from public.conversations c
@@ -705,7 +742,7 @@ create policy withdraw_owner on public.withdraw_records for all to authenticated
 create policy conv_select on public.conversations for select to authenticated
   using (public.is_conversation_participant(id));
 create policy conv_insert on public.conversations for insert to authenticated with check (
-  auth.uid() in (customer_id, merchant_id) or customer_id = auth.uid());
+  auth.uid() in (customer_id, merchant_id));
 create policy conv_update on public.conversations for update to authenticated
   using (public.is_conversation_participant(id)) with check (public.is_conversation_participant(id));
 

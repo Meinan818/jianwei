@@ -130,9 +130,11 @@ rejected         商家拒单（终态）
 ### 已提供的后端资产（在 `supabase/` 与 `docs/`）
 
 - `supabase/migrations/20260915000000_init_schema.sql`：初始化库结构——24 张表、16 个枚举、56 条 RLS 策略、3 个 RPC（`apply_wallet_txn`、`claim_order`、`reply_review`）、3 个 Storage 桶（avatars、dish-images、review-images）；含 `handle_new_user` 触发器（从注册元数据 role 自动建 profile）；Realtime publication 覆盖 orders/order_items/messages/notifications/refund_requests/delivery_exceptions。
-- `supabase/migrations/20260915010000_seed_demo.sql`：演示数据——9 家店、26 个分类、62 道菜、6 张券、3 个演示账号。演示账号：
-  - `demo-customer@jianwei.app` / `demo-merchant@jianwei.app` / `demo-rider@jianwei.app`，密码均为 `123456`。
+- `supabase/migrations/20260915010000_seed_demo.sql`：演示数据——9 家店、26 个分类、62 道菜、6 张券、3 个演示账号。演示账号（密码均为 `123456`）：
+  - 演示顾客 `13800000001` ／ 演示商家 `13800000002` ／ 演示骑手 `13800000003`
+  - **登录填手机号**，前端映射为 `{手机号}@jianwei.app` 调 Supabase Auth，所以账号邮箱与手机号严格对应（见下一条「登录标识」）。
   - 跑完后的自检期望：shops=9、categories=26、dishes=62、coupons=6、auth.users=3。
+  - 图片存站点根相对路径 `/images/xxx.jpg`（前端 `public/images/` 下 11 张真实图片），不依赖原托管平台。
 - `supabase/gen/gen_seed.py`：seed 生成器（改演示数据后 `python3 supabase/gen/gen_seed.py > supabase/migrations/20260915010000_seed_demo.sql`）。
 - `docs/Supabase控制台操作清单.md`：在 Supabase 控制台的逐步操作手册。
 - `docs/简味点单-Supabase数据库设计稿.html`：数据库设计可视化（ER 图、枚举、RLS 说明），浏览器直接打开。
@@ -140,7 +142,11 @@ rejected         商家拒单（终态）
 ### 迁移分期（建议严格按期推进，每期都要 tsc 0 + build 过 + git commit）
 
 - **第 0 期（人工，在 Supabase 控制台）**：注册 Supabase → 新建项目，**区域选 Singapore（新加坡）或 Tokyo（东京），区域创建后不可更改** → SQL Editor 依次跑 init、seed 两个 migration → Auth 设置里关闭 "Confirm email"（否则演示账号无法直接登录）→ 拿到 Project URL 和 anon public key（注意：anon key 设计上就是公开的，安全完全靠 RLS；**service_role key 严禁放进前端**）。
-- **第 1 期（Auth）**：安装 `@supabase/supabase-js`；新建 client，读环境变量 `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`；用 Supabase Auth 替换 `useAuth` 的模拟登录（邮箱 + 密码走真实认证；短信验证码保持前端 Mock `123456`，注明真实短信接入点）；三端账号角色与 profiles 表对齐。
+- **第 1 期（Auth）**：安装 `@supabase/supabase-js`；新建 client，读环境变量 `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`；用 Supabase Auth 替换 `useAuth` 的模拟登录；三端账号角色与 profiles 表对齐。
+  - **登录标识（2026-09-27 用户拍板，方案 A）**：登录页**保持手机号**不变（现为 11 位正则校验，验证码/密码/注册/找回四条路都基于手机号），
+    程序内部把手机号映射成合成邮箱 `{手机号}@jianwei.app` 去调 Supabase Auth，用户无感知。
+    Supabase Auth 需要真实邮箱，但**不发任何邮件**（演示环境已关闭 Confirm email）。
+  - 短信验证码继续由前端 Mock（固定 `123456`），代码中注明真实短信接入点。
 - **第 2 期（业务数据）**：把 shops / shop_settings / categories / dishes / orders / order_items / addresses / messages / reviews / coupons / 会员钱包 / notifications 从 localStorage 逐步改为 Supabase 查询。**开工前先以当前前端源码为准做一次字段对账**：前端数据模型（见第 4 节，尤其 9 态订单枚举、会话 id 模型、未读三字段）与 SQL 表结构有差异时，新增 ALTER migration 补齐，不要推翻已有 24 张表。
 - **第 3 期（Realtime）**：用 Realtime 订阅替换 CustomEvent/storage 监听，实现订单状态、IM 消息、骑手位置三端实时同步。
 - **第 4 期（Storage，可选）**：用户头像、评价图、商家换图改为 Supabase Storage 上传（替换 base64）。11 张菜品图已在本地 `public/images`，可继续保留。
@@ -191,3 +197,11 @@ rejected         商家拒单（终态）
    - 它同时驱动三端设置页的版本号（`APP_VERSION` = `v{APP_EDITION}.0.0`）与启动页底部彩蛋文案「大野鸡第 N 版原型演示版本」，
      只改这一个数字，不要在各页面散写版本号。
    - 版次变化可作为"这次迭代确实上线了"的肉眼验证；但**文档类提交推送后线上版本号不变是正常的**，不要为此反复调整。
+
+## 9. 安全与环境变量（2026-09-27 由 Codex 补充）
+
+- `.env`、`.env.*` 已被 `.gitignore` 忽略；提交前用 `git status --short` 确认待提交列表里没有任何 `.env` 文件。
+- 变量名只写在 `.env.example`，真实值写进 `.env.local`（不入库）。
+- 前端只允许放 anon / publishable key；service_role / secret key 严禁出现在前端代码、文档、提交信息或聊天里。
+- 任何 API Key、Token、数据库密码、云平台凭证都不得写进代码、日志或 Git 历史；怀疑泄露先提醒用户。
+- 涉及删除数据、部署生产、修改账号权限的操作，先取得用户确认。
