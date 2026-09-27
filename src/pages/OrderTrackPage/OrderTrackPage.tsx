@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import TopNavBar from '@/components/TopNavBar'
 import { useOrders } from '@/hooks/useOrders'
+import { formatOrderNo } from '@/data/order'
 import { useReviews } from '@/hooks/useReviews'
 import { useCart } from '@/hooks/useCart'
 import { useNavigatePush, usePageBack } from '@/hooks/useNavigationStack'
@@ -632,7 +633,7 @@ export default function OrderTrackPage() {
           <div className="space-y-2 text-sm">
             <div className="flex justify-between">
               <span className="text-muted-foreground">订单号</span>
-              <span className="text-foreground text-xs tabular-nums">{order.id}</span>
+              <span className="text-foreground text-xs tabular-nums">{formatOrderNo(order)}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">下单时间</span>

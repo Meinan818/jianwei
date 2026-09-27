@@ -4,6 +4,7 @@ import { motion } from 'framer-motion'
 import { Check, Home, Receipt, Clock, MapPin } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useOrders } from '@/hooks/useOrders'
+import { formatOrderNo } from '@/data/order'
 
 export default function PaymentSuccessPage() {
   const navigate = useNavigate()
@@ -96,7 +97,7 @@ export default function PaymentSuccessPage() {
           <>
             <div className="flex items-center justify-between pb-3 border-b border-border/40">
               <span className="text-sm text-muted-foreground">订单号</span>
-              <span className="text-sm font-medium tabular-nums">{order.id}</span>
+              <span className="text-sm font-medium tabular-nums">{formatOrderNo(order)}</span>
             </div>
             <div className="flex items-center gap-3">
               <div className="size-8 rounded-full bg-accent flex items-center justify-center shrink-0">

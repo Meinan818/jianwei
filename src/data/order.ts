@@ -89,6 +89,8 @@ export interface IOrderPromoInfo {
 
 export interface IOrder {
   id: string
+  /** 人类可读单号（数据库自增列 order_seq，第 2 期起用于界面展示） */
+  orderSeq?: number
   shopId: string
   shopName: string
   shopCover: string
@@ -149,4 +151,13 @@ export interface IOrder {
   refundRequest?: IRefundRequest  // 当前售后申请（一单一个进行中的售后）
   // 配送异常记录
   deliveryExceptions?: IDeliveryException[]
+}
+
+/**
+ * 展示用订单号（第 2 期）。
+ * 数据库里 orders.id 是 uuid，不再适合直接展示，因此用自增列 order_seq 生成人类可读单号；
+ * 订单刚在本地创建、还没写回数据库拿到 order_seq 时，用 id 前 8 位兜底。
+ */
+export function formatOrderNo(o: Pick<IOrder, 'id' | 'orderSeq'>): string {
+  return o.orderSeq ? `ORD${String(o.orderSeq).padStart(6, '0')}` : o.id.slice(0, 8).toUpperCase()
 }

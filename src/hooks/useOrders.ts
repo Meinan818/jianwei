@@ -1,11 +1,30 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { scopedStorage } from '@lark-apaas/client-toolkit-lite'
 import type { IOrder, OrderStatus, IRefundRequest, RefundStatus, IDeliveryException, DeliveryExceptionType } from '@/data/order'
 import { SHOP_STATUS_KEY } from '@/data/shop-status'
 import type { IShopStatus } from '@/data/shop-status'
+import { supabase } from '@/lib/supabase'
+import { useAuth } from '@/hooks/useAuth'
+import { fetchVisibleOrders, upsertOrder } from '@/data/orders-remote'
 
 const ORDERS_KEY = 'food_delivery_orders'
 const ORDERS_CHANGE_EVENT = 'food_delivery_orders_change'
+
+/**
+ * 订单 id 生成（第 2 期 2b）。
+ * 数据库 orders.id 是 uuid，原来用的 `ORD+时间戳` 写不进去，所以新订单改用 uuid；
+ * 界面上的"订单号"由 formatOrderNo() 用数据库自增列 order_seq 展示。
+ */
+function newOrderId(): string {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID()
+    }
+  } catch {
+    // ignore
+  }
+  return `ORD${Date.now()}`
+}
 
 // ========== 订单字段归一化（防御脏数据，避免整页 ErrorBoundary） ==========
 function normalizeOrder(raw: any): IOrder {
@@ -182,6 +201,10 @@ function buildTimeline(status: OrderStatus, createdAt: number, order?: IOrder): 
 }
 
 export function useOrders() {
+  const { user, isLoggedIn } = useAuth()
+  // 已同步到数据库的订单快照（id → JSON），用于判断哪些订单发生了本地改动
+  const syncedRef = useRef<Map<string, string>>(new Map())
+
   // ✅ 同步 lazy init：首渲染就有数据，避免 PaymentPage 等守卫在 orders 为空时误判跳转
   const [orders, setOrders] = useState<IOrder[]>(() => {
     try {
@@ -216,6 +239,54 @@ export function useOrders() {
     return () => window.removeEventListener(ORDERS_CHANGE_EVENT, handler)
   }, [])
 
+  // ==========================================================================
+  // 第 2 期 2b：订单与数据库的双向镜像
+  //   读：登录后拉一遍（RLS 自动限定可见范围），以数据库为准，
+  //       但保留数据库里还没有的本地订单（例如刚下单、尚未同步上去的）。
+  //   写：orders 状态变化后，把与会话基线不一致的订单 upsert 回去。
+  //   这样 19 处既有业务逻辑（状态机、时间线、金额）一行都不用改。
+  //   注意：跨设备的"实时"看到新单要等第 3 期 Realtime；现阶段需刷新页面。
+  // ==========================================================================
+  useEffect(() => {
+    if (!supabase || !isLoggedIn) return
+    let cancelled = false
+    void (async () => {
+      const remote = await fetchVisibleOrders()
+      if (cancelled || !remote) return
+      const remoteIds = new Set(remote.map(o => o.id))
+      remote.forEach(o => syncedRef.current.set(o.id, JSON.stringify(o)))
+      setOrders(prev => {
+        const localOnly = prev.filter(o => !remoteIds.has(o.id))
+        const merged = [...localOnly, ...remote].sort((a, b) => b.createdAt - a.createdAt)
+        if (JSON.stringify(prev) === JSON.stringify(merged)) return prev
+        scopedStorage.setItem(ORDERS_KEY, JSON.stringify(merged))
+        return merged
+      })
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [isLoggedIn, user.id])
+
+  // 把本地改动回写数据库（只写内容真的变了的订单，避免每次渲染都打库）
+  useEffect(() => {
+    if (!supabase || !isLoggedIn || orders.length === 0) return
+    const dirty = orders.filter(o => syncedRef.current.get(o.id) !== JSON.stringify(o))
+    if (dirty.length === 0) return
+    let cancelled = false
+    void (async () => {
+      for (const o of dirty) {
+        const ok = await upsertOrder(o)
+        if (cancelled) return
+        // 成功才记录基线；失败留待下次重试（例如状态流转被数据库守卫拒绝）
+        if (ok) syncedRef.current.set(o.id, JSON.stringify(o))
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [orders, isLoggedIn])
+
   const saveOrders = useCallback((newOrders: IOrder[]) => {
     setOrders(newOrders)
     scopedStorage.setItem(ORDERS_KEY, JSON.stringify(newOrders))
@@ -225,7 +296,7 @@ export function useOrders() {
   // 创建待支付订单（顾客端下单后先进入待支付状态）
   const createPendingOrder = useCallback((orderData: Omit<IOrder, 'id' | 'statusTimeline' | 'createdAt' | 'status' | 'paidAt' | 'payExpireAt'>): IOrder => {
     const now = Date.now()
-    const id = `ORD${now}`
+    const id = newOrderId()
     const expireAt = now + PAY_TIMEOUT_MS // 待支付时效，统一由常量管理
     const newOrder: IOrder = {
       ...orderData,
@@ -357,7 +428,7 @@ export function useOrders() {
   // 创建订单（顾客端）——兼容旧逻辑，直接进入待接单（=已支付）
   const createOrder = useCallback((orderData: Omit<IOrder, 'id' | 'statusTimeline' | 'createdAt' | 'status'>): IOrder => {
     const now = Date.now()
-    const id = `ORD${now}`
+    const id = newOrderId()
     const newOrder: IOrder = {
       ...orderData,
       id,
