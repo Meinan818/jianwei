@@ -4,7 +4,8 @@ import { SHOP_STATUS_KEY, FINANCE_WITHDRAW_KEY, USER_SHOPS_KEY } from '@/data/sh
 import type { IShopStatus, ICustomCategory, IShopActivity, IFinanceWithdrawRecord, IDishSpecOverride, IDishExtraOverride, IUserCreatedShop, IUserCreatedDish } from '@/data/shop-status'
 import type { IDish, IDishSpec, IDishExtra, IShop, IShopCategory } from '@/data/shops'
 import { MOCK_SHOPS, getAllShops, isRemoteShopsLoaded, patchRemoteShops, SHOPS_CHANGE_EVENT } from '@/data/shops'
-import { reloadShops } from '@/data/shops-remote'
+import { ensureShopsLoaded, reloadShops } from '@/data/shops-remote'
+import { useAuth } from '@/hooks/useAuth'
 import {
   updateDishRemote,
   updateShopRemote,
@@ -218,6 +219,7 @@ function reconcileShopFields(parsed: IShopStatus): boolean {
 }
 
 export function useShopStatus() {
+  const { isLoggedIn } = useAuth()
   const [shopStatus, setShopStatus] = useState<IShopStatus>({})
   // 店铺基础数据（数据库）的版本号：挂载时缓存可能还没加载完，
   // 到位后需要再清一次老版本的冗余菜品覆盖（见下方 pruneSeededDishOverrides）
@@ -228,6 +230,13 @@ export function useShopStatus() {
     window.addEventListener(SHOPS_CHANGE_EVENT, onShops)
     return () => window.removeEventListener(SHOPS_CHANGE_EVENT, onShops)
   }, [])
+  // 2026-09-28 修复：商家端的页面都不会调用 useShops()，因此没人触发「从数据库读店铺」，
+  // getAllShops() 一直返回内置演示店铺（id 是 '1'~'8'），商家自己的 uuid 店铺找不到，
+  // 「商品管理」等页面就会永远停在"店铺数据加载中..."。这里补上触发点。
+  // ensureShopsLoaded 是幂等的：没登录 / 已加载过会直接短路，重复调用无副作用。
+  useEffect(() => {
+    if (isLoggedIn) void ensureShopsLoaded()
+  }, [isLoggedIn])
 
   useEffect(() => {
     const stored = scopedStorage.getItem(SHOP_STATUS_KEY)

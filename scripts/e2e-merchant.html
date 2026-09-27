@@ -1,0 +1,114 @@
+<!doctype html>
+<!--
+  商家端「商品管理」端到端测试页（无头浏览器可用）
+
+  背景：2026-09-28 用户反馈「商家端商品管理一直在加载，进不去」。
+  根因是商家端页面都不会触发「从数据库读店铺」，getAllShops() 一直是内置演示店铺（id '1'~'8'），
+  商家自己的 uuid 店铺找不到，页面就永远停在"店铺数据加载中..."。修复见 useShopStatus。
+
+  用法（与 e2e-login.html 相同，必须在构建产物目录里跑）：
+    1) npm run build:standalone
+    2) 把本文件复制到 dist/client/_e2e-merchant.html
+    3) npx vite preview --port 4322 --strictPort
+    4) chrome --headless=new --virtual-time-budget=90000 --dump-dom http://localhost:4322/_e2e-merchant.html
+    5) 结果在页面顶部 <pre id="log"> 里
+-->
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>E2E 商家端商品管理</title></head>
+<body style="font:13px/1.5 monospace">
+<pre id="log">[start]</pre>
+<iframe id="app" src="/" style="width:420px;height:820px;border:1px solid #ccc"></iframe>
+<script>
+const out = document.getElementById('log')
+const log = (m) => { out.textContent += '\n' + m }
+const sleep = (ms) => new Promise(r => setTimeout(r, ms))
+const app = document.getElementById('app')
+const doc = () => app.contentDocument
+const win = () => app.contentWindow
+
+async function waitFor(fn, timeout = 15000, label = '') {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeout) {
+    try { const r = fn(); if (r) return r } catch (e) { /* not ready */ }
+    await sleep(200)
+  }
+  throw new Error('等待超时: ' + label)
+}
+const btn = (text, exact = true) =>
+  [...doc().querySelectorAll('button,a')].find(e =>
+    exact ? e.textContent.trim() === text : e.textContent.trim().includes(text))
+function setInput(el, value) {
+  const w = win()
+  const setter = Object.getOwnPropertyDescriptor(w.HTMLInputElement.prototype, 'value').set
+  setter.call(el, value)
+  el.dispatchEvent(new w.Event('input', { bubbles: true }))
+}
+const pageText = () => { try { return doc().body.innerText.replace(/\n+/g, ' | ') } catch (e) { return '(读不到页面)' } }
+
+;(async () => {
+  try {
+    await new Promise(r => app.addEventListener('load', r, { once: true }))
+    await waitFor(() => doc().body.innerText.includes('商家端'), 15000, '启动页渲染')
+    log('① 启动页渲染正常')
+
+    btn('商家端', false).click()
+    await waitFor(() => doc().querySelector('input[placeholder*="手机号"]'), 15000, '登录页')
+    log('② 已进入商家端登录页: ' + win().location.hash)
+
+    const pwdTab = btn('密码', false)
+    if (pwdTab) { pwdTab.click(); await sleep(400); log('③ 已切到密码登录') }
+
+    setInput(doc().querySelector('input[placeholder*="手机号"]'), '13800000002')
+    const pwd = doc().querySelector('input[type="password"]')
+    if (!pwd) throw new Error('找不到密码输入框')
+    setInput(pwd, '123456')
+    log('④ 已填演示商家手机号 13800000002 / 密码 123456')
+
+    const agreeBtn = btn('我已阅读并同意', false)
+    if (agreeBtn) { agreeBtn.click(); await sleep(300); log('⑤ 已勾选同意协议') }
+
+    const loginBtn = btn('登录')
+    if (!loginBtn) throw new Error('找不到"登录"按钮')
+    loginBtn.click()
+    log('⑥ 已点击登录，等待跳转…')
+
+    const t0 = Date.now()
+    let ok = false, toast = ''
+    while (Date.now() - t0 < 25000) {
+      if (win().location.hash.includes('/merchant')) { ok = true; break }
+      const t = doc().querySelector('[data-sonner-toast]')
+      if (t) toast = t.innerText.trim().replace(/\n+/g, ' ')
+      await sleep(300)
+    }
+    if (!ok) {
+      log('❌ 未进入商家端；提示=' + (toast || '（无 toast）'))
+      log('   当前路由: ' + win().location.hash)
+      log('   页面文字: ' + pageText().slice(0, 300))
+      throw new Error('登录未成功')
+    }
+    log('⑦ 商家端登录成功，路由: ' + win().location.hash)
+
+    // 关键验证：直接打开「商品管理」。修复前这一页会永远停在"店铺数据加载中..."
+    win().location.hash = '#/merchant/dishes'
+    await sleep(4500)
+    const text = doc().body.innerText
+    const stuck = text.includes('店铺数据加载中')
+    const notFound = text.includes('没有找到你的店铺')
+    const hasDish = text.includes('招牌牛肉饭')
+    log('⑧ 商品管理页路由: ' + win().location.hash)
+    log('   仍停在"店铺数据加载中": ' + stuck)
+    log('   显示"没有找到你的店铺": ' + notFound)
+    log('   渲染出数据库菜品「招牌牛肉饭」: ' + hasDish)
+    log((!stuck && !notFound && hasDish)
+      ? '✅ 商品管理页可正常打开，店铺/菜品数据来自数据库'
+      : '❌ 商品管理页仍未正常渲染')
+    log('   页面文字片段: ' + pageText().slice(0, 220))
+  } catch (e) {
+    log('❌ 测试异常: ' + e.message)
+    log('   页面文字: ' + pageText().slice(0, 300))
+  }
+  log('[done]')
+})()
+</script>
+</body>
+</html>

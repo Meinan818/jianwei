@@ -8,7 +8,7 @@ import {
 import { useAuth } from '@/hooks/useAuth'
 import { useShopStatus } from '@/hooks/useShopStatus'
 import { useNavigatePush } from '@/hooks/useNavigationStack'
-import { getAllShops } from '@/data/shops'
+import { getAllShops, isRemoteShopsLoaded } from '@/data/shops'
 import { Image } from '@/components/ui/image'
 import { toast } from 'sonner'
 
@@ -327,9 +327,15 @@ export default function MerchantDishesPage() {
   }
 
   if (!shop) {
+    // 数据库里的店铺已经加载完却还是找不到自己的店 → 这不是"加载中"，
+    // 而是登录态或数据有问题，明确说明原因，别让人对着转不完的"加载中"发呆。
     return (
-      <div className="h-full flex items-center justify-center text-muted-foreground">
-        店铺数据加载中...
+      <div className="h-full flex flex-col items-center justify-center gap-2 px-8 text-center text-muted-foreground">
+        {isRemoteShopsLoaded() ? (
+          <p className="text-sm">没有找到你的店铺，请返回启动页重新登录商家端</p>
+        ) : (
+          <p className="text-sm">店铺数据加载中...</p>
+        )}
       </div>
     )
   }

@@ -234,6 +234,8 @@ export async function upsertOrder(order: IOrder): Promise<boolean> {
     // 刻意不用 .upsert()：ON CONFLICT 的冲突分支会改用「更新」策略判定，
     // 实测在 RLS 下会被拒（同样数据普通 INSERT 通过）。显式「先插、冲突再改」更可靠。
     const ins = await sb.from('orders').insert(row)
+    // 订单行是不是这次新建的：决定明细要不要写（详见下方明细段的注释）
+    const isNewOrder = !ins.error
     if (ins.error) {
       if (ins.error.code === '23505') {
         const upd = await sb.from('orders').update(row).eq('id', order.id)
@@ -248,8 +250,23 @@ export async function upsertOrder(order: IOrder): Promise<boolean> {
         return false
       }
     }
-    // 明细也需要写（新订单才需要插入；已存在则跳过）
-    if (order.items?.length) {
+    // ---- 订单明细 ----
+    // ⚠️ 明细在本项目里是「下单快照」，刻意不可改：RLS 只给了 order_items 的 select / insert
+    //    两条策略，没有 update / delete；表上也没有 (order_id, sort) 唯一约束。
+    //    所以**每次回写都插一遍会造成成倍重复**（2026-09-28 实测：一笔订单被插成 96 条、
+    //    另一笔 192 条，顾客端与商家端都显示成一长串同样的菜）。
+    //    正确做法：只在新订单时写；老订单只在「库里确实一条明细都没有」时补写
+    //    （覆盖 orders 插成功但明细没写上的极端情况）。
+    let needItems = isNewOrder
+    if (!needItems && order.items?.length) {
+      const { data: existingItems, error: itemsQueryError } = await sb
+        .from('order_items')
+        .select('id')
+        .eq('order_id', order.id)
+        .limit(1)
+      needItems = !itemsQueryError && (existingItems?.length ?? 0) === 0
+    }
+    if (needItems && order.items?.length) {
       const rows = order.items.map((it, idx) => ({
         order_id: order.id,
         dish_id: /^[0-9a-f-]{36}$/i.test(it.dishId) ? it.dishId : null,
