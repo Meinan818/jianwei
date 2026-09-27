@@ -132,7 +132,10 @@ rejected         商家拒单（终态）
 - `supabase/migrations/20260915000000_init_schema.sql`：初始化库结构——24 张表、16 个枚举、56 条 RLS 策略、3 个 RPC（`apply_wallet_txn`、`claim_order`、`reply_review`）、3 个 Storage 桶（avatars、dish-images、review-images）；含 `handle_new_user` 触发器（从注册元数据 role 自动建 profile）；Realtime publication 覆盖 orders/order_items/messages/notifications/refund_requests/delivery_exceptions。
 - `supabase/migrations/20260915010000_seed_demo.sql`：演示数据——9 家店、26 个分类、62 道菜、6 张券、3 个演示账号。演示账号（密码均为 `123456`）：
   - 演示顾客 `13800000001` ／ 演示商家 `13800000002` ／ 演示骑手 `13800000003`
-  - **登录填手机号**，前端映射为 `{手机号}@jianwei.app` 调 Supabase Auth，所以账号邮箱与手机号严格对应（见下一条「登录标识」）。
+  - **登录填手机号**，前端映射为 `phone{手机号}@jianwei.app` 调 Supabase Auth（见下一条「登录标识」）。
+  - ⚠️ **合成邮箱必须带字母前缀**：Supabase Auth 会拒绝「本地部分纯数字」的邮箱——
+    实测 `13900000099@jianwei.app` 直接返回 `email_address_invalid`，登录路径甚至报 500。
+    所以统一用 `phone{手机号}@jianwei.app`，不要写成 `{手机号}@jianwei.app`。
   - 跑完后的自检期望：shops=9、categories=26、dishes=62、coupons=6、auth.users=3。
   - 图片存站点根相对路径 `/images/xxx.jpg`（前端 `public/images/` 下 11 张真实图片），不依赖原托管平台。
 - `supabase/gen/gen_seed.py`：seed 生成器（改演示数据后 `python3 supabase/gen/gen_seed.py > supabase/migrations/20260915010000_seed_demo.sql`）。
@@ -144,7 +147,7 @@ rejected         商家拒单（终态）
 - **第 0 期（人工，在 Supabase 控制台）**：注册 Supabase → 新建项目，**区域选 Singapore（新加坡）或 Tokyo（东京），区域创建后不可更改** → SQL Editor 依次跑 init、seed 两个 migration → Auth 设置里关闭 "Confirm email"（否则演示账号无法直接登录）→ 拿到 Project URL 和 anon public key（注意：anon key 设计上就是公开的，安全完全靠 RLS；**service_role key 严禁放进前端**）。
 - **第 1 期（Auth）**：安装 `@supabase/supabase-js`；新建 client，读环境变量 `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`；用 Supabase Auth 替换 `useAuth` 的模拟登录；三端账号角色与 profiles 表对齐。
   - **登录标识（2026-09-27 用户拍板，方案 A）**：登录页**保持手机号**不变（现为 11 位正则校验，验证码/密码/注册/找回四条路都基于手机号），
-    程序内部把手机号映射成合成邮箱 `{手机号}@jianwei.app` 去调 Supabase Auth，用户无感知。
+    程序内部把手机号映射成合成邮箱 `phone{手机号}@jianwei.app` 去调 Supabase Auth，用户无感知。
     Supabase Auth 需要真实邮箱，但**不发任何邮件**（演示环境已关闭 Confirm email）。
   - 短信验证码继续由前端 Mock（固定 `123456`），代码中注明真实短信接入点。
 - **第 2 期（业务数据）**：把 shops / shop_settings / categories / dishes / orders / order_items / addresses / messages / reviews / coupons / 会员钱包 / notifications 从 localStorage 逐步改为 Supabase 查询。**开工前先以当前前端源码为准做一次字段对账**：前端数据模型（见第 4 节，尤其 9 态订单枚举、会话 id 模型、未读三字段）与 SQL 表结构有差异时，新增 ALTER migration 补齐，不要推翻已有 24 张表。

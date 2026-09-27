@@ -117,9 +117,11 @@ def main():
     demo_users = [
         # 登录走「手机号 → {手机号}@jianwei.app 合成邮箱」的映射（方案 A，2026-09-27 用户拍板），
         # 因此账号邮箱与手机号严格对应：输入 13800000001 + 密码 123456 即是演示顾客。
-        ("10000000-0000-4000-8000-000000000001","13800000001@jianwei.app","customer","演示顾客","13800000001"),
-        ("10000000-0000-4000-8000-000000000002","13800000002@jianwei.app","merchant","演示商家","13800000002"),
-        ("10000000-0000-4000-8000-000000000003","13800000003@jianwei.app","rider","演示骑手小张","13800000003")]
+        # ⚠️ 合成邮箱必须带字母前缀：Supabase 会拒绝「本地部分纯数字」的邮箱
+        #    （实测 `13900000099@jianwei.app` 报 email_address_invalid），故统一用 phone{手机号}@jianwei.app。
+        ("10000000-0000-4000-8000-000000000001","phone13800000001@jianwei.app","customer","演示顾客","13800000001"),
+        ("10000000-0000-4000-8000-000000000002","phone13800000002@jianwei.app","merchant","演示商家","13800000002"),
+        ("10000000-0000-4000-8000-000000000003","phone13800000003@jianwei.app","rider","演示骑手小张","13800000003")]
     for uid_, email, role, nick, phone in demo_users:
         app_meta = '{"provider":"email","providers":["email"]}'
         user_meta = f'{{"role":"{role}","nickname":"{nick}","phone":"{phone}"}}'
@@ -129,6 +131,14 @@ values ('00000000-0000-0000-0000-000000000000',{q(uid_)}::uuid,'authenticated','
 on conflict (id) do nothing;
 insert into auth.identities (provider_id,user_id,identity_data,provider,last_sign_in_at,created_at,updated_at)
 values ({q(email)},{q(uid_)}::uuid,{q(ident)}::jsonb,'email',now(),now(),now()) on conflict do nothing;""")
+
+    w("-- 幂等修正：早期版本的 `{手机号}@jianwei.app` 会被 Supabase 判为无效邮箱（本地部分纯数字），")
+    w("-- 重跑本 seed 时把已存在的旧邮箱一并纠正，无需手工清理。")
+    for uid_, email, role, nick, phone in demo_users:
+        user_meta = f'{{"role":"{role}","nickname":"{nick}","phone":"{phone}"}}'
+        ident = f'{{"sub":"{uid_}","email":"{email}"}}'
+        w(f"""update auth.users set email = {q(email)}, raw_user_meta_data = {q(user_meta)}::jsonb where id = {q(uid_)}::uuid;
+update auth.identities set provider_id = {q(email)}, identity_data = {q(ident)}::jsonb where user_id = {q(uid_)}::uuid;""")
     w("update public.profiles set is_online=true where id='10000000-0000-4000-8000-000000000003'::uuid;\n")
 
     w("-- 8 家内置演示店（is_demo=true，owner 为空，所有人只读）")

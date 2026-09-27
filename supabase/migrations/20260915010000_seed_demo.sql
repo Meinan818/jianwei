@@ -5,20 +5,28 @@ begin;
 
 -- 三个演示账号（密码均 123456），profile 由 init 的 auth 触发器自动建立
 insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,raw_app_meta_data,raw_user_meta_data)
-values ('00000000-0000-0000-0000-000000000000','10000000-0000-4000-8000-000000000001'::uuid,'authenticated','authenticated','13800000001@jianwei.app',crypt('123456',gen_salt('bf')),now(),now(),now(),'{"provider":"email","providers":["email"]}'::jsonb,'{"role":"customer","nickname":"演示顾客","phone":"13800000001"}'::jsonb)
+values ('00000000-0000-0000-0000-000000000000','10000000-0000-4000-8000-000000000001'::uuid,'authenticated','authenticated','phone13800000001@jianwei.app',crypt('123456',gen_salt('bf')),now(),now(),now(),'{"provider":"email","providers":["email"]}'::jsonb,'{"role":"customer","nickname":"演示顾客","phone":"13800000001"}'::jsonb)
 on conflict (id) do nothing;
 insert into auth.identities (provider_id,user_id,identity_data,provider,last_sign_in_at,created_at,updated_at)
-values ('13800000001@jianwei.app','10000000-0000-4000-8000-000000000001'::uuid,'{"sub":"10000000-0000-4000-8000-000000000001","email":"13800000001@jianwei.app"}'::jsonb,'email',now(),now(),now()) on conflict do nothing;
+values ('phone13800000001@jianwei.app','10000000-0000-4000-8000-000000000001'::uuid,'{"sub":"10000000-0000-4000-8000-000000000001","email":"phone13800000001@jianwei.app"}'::jsonb,'email',now(),now(),now()) on conflict do nothing;
 insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,raw_app_meta_data,raw_user_meta_data)
-values ('00000000-0000-0000-0000-000000000000','10000000-0000-4000-8000-000000000002'::uuid,'authenticated','authenticated','13800000002@jianwei.app',crypt('123456',gen_salt('bf')),now(),now(),now(),'{"provider":"email","providers":["email"]}'::jsonb,'{"role":"merchant","nickname":"演示商家","phone":"13800000002"}'::jsonb)
+values ('00000000-0000-0000-0000-000000000000','10000000-0000-4000-8000-000000000002'::uuid,'authenticated','authenticated','phone13800000002@jianwei.app',crypt('123456',gen_salt('bf')),now(),now(),now(),'{"provider":"email","providers":["email"]}'::jsonb,'{"role":"merchant","nickname":"演示商家","phone":"13800000002"}'::jsonb)
 on conflict (id) do nothing;
 insert into auth.identities (provider_id,user_id,identity_data,provider,last_sign_in_at,created_at,updated_at)
-values ('13800000002@jianwei.app','10000000-0000-4000-8000-000000000002'::uuid,'{"sub":"10000000-0000-4000-8000-000000000002","email":"13800000002@jianwei.app"}'::jsonb,'email',now(),now(),now()) on conflict do nothing;
+values ('phone13800000002@jianwei.app','10000000-0000-4000-8000-000000000002'::uuid,'{"sub":"10000000-0000-4000-8000-000000000002","email":"phone13800000002@jianwei.app"}'::jsonb,'email',now(),now(),now()) on conflict do nothing;
 insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,raw_app_meta_data,raw_user_meta_data)
-values ('00000000-0000-0000-0000-000000000000','10000000-0000-4000-8000-000000000003'::uuid,'authenticated','authenticated','13800000003@jianwei.app',crypt('123456',gen_salt('bf')),now(),now(),now(),'{"provider":"email","providers":["email"]}'::jsonb,'{"role":"rider","nickname":"演示骑手小张","phone":"13800000003"}'::jsonb)
+values ('00000000-0000-0000-0000-000000000000','10000000-0000-4000-8000-000000000003'::uuid,'authenticated','authenticated','phone13800000003@jianwei.app',crypt('123456',gen_salt('bf')),now(),now(),now(),'{"provider":"email","providers":["email"]}'::jsonb,'{"role":"rider","nickname":"演示骑手小张","phone":"13800000003"}'::jsonb)
 on conflict (id) do nothing;
 insert into auth.identities (provider_id,user_id,identity_data,provider,last_sign_in_at,created_at,updated_at)
-values ('13800000003@jianwei.app','10000000-0000-4000-8000-000000000003'::uuid,'{"sub":"10000000-0000-4000-8000-000000000003","email":"13800000003@jianwei.app"}'::jsonb,'email',now(),now(),now()) on conflict do nothing;
+values ('phone13800000003@jianwei.app','10000000-0000-4000-8000-000000000003'::uuid,'{"sub":"10000000-0000-4000-8000-000000000003","email":"phone13800000003@jianwei.app"}'::jsonb,'email',now(),now(),now()) on conflict do nothing;
+-- 幂等修正：早期版本的 `{手机号}@jianwei.app` 会被 Supabase 判为无效邮箱（本地部分纯数字），
+-- 重跑本 seed 时把已存在的旧邮箱一并纠正，无需手工清理。
+update auth.users set email = 'phone13800000001@jianwei.app', raw_user_meta_data = '{"role":"customer","nickname":"演示顾客","phone":"13800000001"}'::jsonb where id = '10000000-0000-4000-8000-000000000001'::uuid;
+update auth.identities set provider_id = 'phone13800000001@jianwei.app', identity_data = '{"sub":"10000000-0000-4000-8000-000000000001","email":"phone13800000001@jianwei.app"}'::jsonb where user_id = '10000000-0000-4000-8000-000000000001'::uuid;
+update auth.users set email = 'phone13800000002@jianwei.app', raw_user_meta_data = '{"role":"merchant","nickname":"演示商家","phone":"13800000002"}'::jsonb where id = '10000000-0000-4000-8000-000000000002'::uuid;
+update auth.identities set provider_id = 'phone13800000002@jianwei.app', identity_data = '{"sub":"10000000-0000-4000-8000-000000000002","email":"phone13800000002@jianwei.app"}'::jsonb where user_id = '10000000-0000-4000-8000-000000000002'::uuid;
+update auth.users set email = 'phone13800000003@jianwei.app', raw_user_meta_data = '{"role":"rider","nickname":"演示骑手小张","phone":"13800000003"}'::jsonb where id = '10000000-0000-4000-8000-000000000003'::uuid;
+update auth.identities set provider_id = 'phone13800000003@jianwei.app', identity_data = '{"sub":"10000000-0000-4000-8000-000000000003","email":"phone13800000003@jianwei.app"}'::jsonb where user_id = '10000000-0000-4000-8000-000000000003'::uuid;
 update public.profiles set is_online=true where id='10000000-0000-4000-8000-000000000003'::uuid;
 
 -- 8 家内置演示店（is_demo=true，owner 为空，所有人只读）
