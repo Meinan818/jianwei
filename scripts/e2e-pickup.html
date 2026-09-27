@@ -1,0 +1,108 @@
+<!doctype html>
+<!--
+  到店自取回归：① 自取单不进骑手抢单大厅；② 商家端能点「顾客已取餐」把订单完成
+  用法：node scripts/e2e-smoke.mjs scripts/e2e-pickup.html rider
+-->
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>E2E 到店自取</title></head>
+<body style="font:12px/1.5 monospace">
+<pre id="log">[start]</pre>
+<iframe id="app" src="/" style="width:420px;height:820px;border:1px solid #ccc"></iframe>
+<script>
+const out = document.getElementById('log')
+const log = (m) => { out.textContent += '\n' + m }
+const sleep = (ms) => new Promise(r => setTimeout(r, ms))
+const app = document.getElementById('app')
+const doc = () => app.contentDocument
+const win = () => app.contentWindow
+let pass = false
+
+async function waitFor(fn, timeout = 25000, label = '') {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeout) {
+    try { const r = fn(); if (r) return r } catch (e) { /* not ready */ }
+    await sleep(200)
+  }
+  throw new Error('等待超时: ' + label)
+}
+const btn = (text) => [...doc().querySelectorAll('button,a')].find(e => e.textContent.trim().includes(text))
+function setInput(el, value) {
+  const w = win()
+  const setter = Object.getOwnPropertyDescriptor(w.HTMLInputElement.prototype, 'value').set
+  setter.call(el, value)
+  el.dispatchEvent(new w.Event('input', { bubbles: true }))
+}
+function readOrders() {
+  const store = win().localStorage
+  for (let i = 0; i < store.length; i++) {
+    const k = store.key(i)
+    if (k && k.indexOf('food_delivery_orders') >= 0) {
+      try { const arr = JSON.parse(store.getItem(k)); if (Array.isArray(arr)) return arr } catch (e) { /* ignore */ }
+    }
+  }
+  return []
+}
+const flat = () => (doc().body.innerText || '').replace(/\n+/g, ' | ')
+async function login(roleLabel, phone, route) {
+  await waitFor(() => doc().body.innerText.includes(roleLabel), 25000, '启动页')
+  btn(roleLabel).click()
+  await waitFor(() => doc().querySelector('input[placeholder*="手机号"]'), 25000, '登录页')
+  const pwdTab = btn('密码')
+  if (pwdTab) { pwdTab.click(); await sleep(400) }
+  setInput(doc().querySelector('input[placeholder*="手机号"]'), phone)
+  setInput(doc().querySelector('input[type="password"]'), '123456')
+  const agree = btn('我已阅读并同意')
+  if (agree) { agree.click(); await sleep(300) }
+  ;[...doc().querySelectorAll('button')].find(b => b.textContent.trim() === '登录').click()
+  await waitFor(() => (win().location.hash || '').includes(route), 30000, '进入 ' + route)
+}
+
+;(async () => {
+  try {
+    await new Promise(r => app.addEventListener('load', r, { once: true }))
+    // ① 骑手：抢单大厅里不该有自取单
+    await login('骑手端', '13800000003', '/rider')
+    win().location.hash = '#/rider/hall'
+    await sleep(4200)
+    const hallText = flat()
+    const m = /当前\s*(\d+)\s*单可抢/.exec(hallText)
+    const poolCount = m ? Number(m[1]) : -1
+    const pickupInHall = hallText.indexOf('到店自取') >= 0
+    log('① 抢单大厅可抢单数 = ' + poolCount + '；大厅里出现「到店自取」= ' + pickupInHall)
+    log('   片段：' + hallText.slice(0, 110))
+    if (pickupInHall) throw new Error('自取单出现在抢单大厅里了')
+
+    // ② 商家：待取餐里能确认顾客已取餐
+    win().location.hash = '#/'
+    await sleep(1500)
+    await login('商家端', '13800000002', '/merchant')
+    win().location.hash = '#/merchant/orders'
+    await sleep(3800)
+    const readyTab = btn('待取餐')
+    if (!readyTab) throw new Error('没有「待取餐」标签')
+    readyTab.click()
+    await sleep(2200)
+    const tabText = flat()
+    log('② 待取餐页：出现「到店自取 · 等顾客到店」= ' + (tabText.indexOf('到店自取') >= 0))
+    log('   片段：' + tabText.slice(0, 150))
+    const done = btn('顾客已取餐')
+    if (!done) throw new Error('自取单没有「顾客已取餐」按钮')
+    // 记下当前 ready 的自取单
+    const before = readOrders().filter(o => o.isPickup && o.status === 'ready').map(o => o.id)
+    done.click()
+    await sleep(3500)
+    const after = readOrders().find(o => o.id === (before[0] || '')) || {}
+    log('③ 点「顾客已取餐」后订单状态 = ' + after.status + '（期望 delivered）')
+    if (after.status !== 'delivered') throw new Error('自取单没有被完成')
+    pass = true
+    log('✅ 到店自取正常：不进抢单大厅，商家可确认取餐完成')
+  } catch (e) {
+    log('❌ 测试异常: ' + (e && e.message ? e.message : String(e)))
+    try { log('   页面文字: ' + flat().slice(0, 200)) } catch (e2) { /* ignore */ }
+  }
+  log('SMOKE_RESULT=' + (pass ? 'PASS' : 'FAIL'))
+  log('[done]')
+})()
+</script>
+</body>
+</html>

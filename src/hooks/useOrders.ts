@@ -124,6 +124,8 @@ function normalizeOrder(raw: any): IOrder {
     acceptExpireAt: o.acceptExpireAt ? Number(o.acceptExpireAt) : undefined,
     appointmentTime: o.appointmentTime,
     deliveryMode: o.deliveryMode === 'appointment' ? 'appointment' : 'instant',
+    // 2026-09-28：归一化必须带上到店自取标记，否则从本机存储读到就丢了（骑手端会误判成外卖单）
+    ...(o.isPickup ? { isPickup: true } : {}),
     status,
     customerId: String(o.customerId || ''),
     statusTimeline,
@@ -251,7 +253,7 @@ export function useOrders() {
   const syncedRef = useRef<Map<string, string>>(new Map())
 
   // ✅ 同步 lazy init：首渲染就有数据，避免 PaymentPage 等守卫在 orders 为空时误判跳转
-  const [orders, setOrders] = useState<IOrder[]>(() => {
+  const [orders, setOrdersState] = useState<IOrder[]>(() => {
     try {
       const stored = scopedStorage.getItem(ORDERS_KEY)
       if (stored) {
@@ -263,6 +265,29 @@ export function useOrders() {
     }
     return []
   })
+
+  /**
+   * 2026-09-28 修复：把 setOrders 包一层，让"更新器"**同步执行**。
+   *
+   * 背景：React 的 setState 更新器是延后执行的，而本文件里 20 来处都是这个写法：
+   *   let result = null
+   *   setOrders(prev => { ...; result = 新订单; return 更新后的列表 })
+   *   return result          // ← 更新器还没跑，这里永远是 null
+   * 调用方拿到 null 就以为失败了，于是出现两个 bug：
+   *   · 骑手抢单成功却弹「手慢了，订单已被抢走」
+   *   · 顾客支付成功却弹「支付失败，请重试」（而且不再跳转成功页）
+   * 这里自己先算出新列表（同步），再把它交给 React，所有既有函数的返回值就都准了。
+   */
+  const ordersRef = useRef<IOrder[]>(orders)
+  useEffect(() => {
+    ordersRef.current = orders
+  }, [orders])
+  const setOrders = useCallback((next: IOrder[] | ((prev: IOrder[]) => IOrder[])) => {
+    const prev = ordersRef.current
+    const list = typeof next === 'function' ? (next as (p: IOrder[]) => IOrder[])(prev) : next
+    ordersRef.current = list
+    setOrdersState(list)
+  }, [])
 
   useEffect(() => {
     const handler = () => {
@@ -1018,8 +1043,9 @@ export function useOrders() {
     return list.sort((a, b) => b.createdAt - a.createdAt)
   }, [orders])
 
-  // 骑手端：抢单大厅 = 所有 ready 状态订单
-  const poolOrders = orders.filter(o => o.status === 'ready')
+  // 骑手端：抢单大厅 = 已出餐且**不是到店自取**的订单
+  // （自取单出餐后由顾客到店取走、商家确认完成，不该派给骑手）
+  const poolOrders = orders.filter(o => o.status === 'ready' && !o.isPickup)
 
   // 骑手端：我的进行中订单
   const getRiderActiveOrders = useCallback((riderId: string): IOrder[] => {

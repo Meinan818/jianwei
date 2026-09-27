@@ -81,7 +81,12 @@ const flat = () => (doc().body.innerText || '').replace(/\n+/g, ' | ')
     const claimBtn = btn('抢单')
     if (!claimBtn) throw new Error('找不到「抢单」按钮')
     claimBtn.click()
-    await sleep(4500)
+    await sleep(900)
+    const toastEl = doc().querySelector('[data-sonner-toast]')
+    const toastText = toastEl ? (toastEl.innerText || '').replace(/\n+/g, ' ') : '(没看到提示)'
+    log('   抢单提示文案：' + toastText)
+    if (toastText.indexOf('已被抢走') >= 0) throw new Error('抢单成功却提示已被抢走')
+    await sleep(4000)
     const afterClaim = readOrders()
     const claimed = afterClaim.find(o => o.riderId && (o.status === 'picked' || o.status === 'delivering'))
     if (!claimed) {

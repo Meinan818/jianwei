@@ -189,6 +189,7 @@ export default function CheckoutPage() {
             discountDish: discountDishAmount || undefined,
           },
          deliveryMode,
+         isPickup: deliveryType === 'pickup',
          appointmentTime: deliveryMode === 'appointment' ? appointmentTime : undefined,
          paymentMethod, // 预设支付方式，收银台可更改
          customerId: user.id || 'guest',

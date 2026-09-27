@@ -124,6 +124,7 @@ export interface IOrder {
   acceptExpireAt?: number   // 商家接单过期时间（超时自动取消/标记）
   appointmentTime?: string  // 预约送达时段，如"12:00-12:30"，为空表示立即送出
   deliveryMode: 'instant' | 'appointment'
+  isPickup?: boolean         // 到店自取：不进骑手抢单大厅，商家确认取餐即完成
   status: OrderStatus
   customerId: string           // 顾客ID（用于消息会话等关联）
   statusTimeline: IOrderStatusNode[]

@@ -73,6 +73,7 @@ export function rowToOrder(
     payExpireAt: ts(row.pay_expire_at),
     ...(row.appointment_time ? { appointmentTime: row.appointment_time } : {}),
     deliveryMode: row.delivery_mode === 'appointment' ? 'appointment' : 'instant',
+    ...(row.is_pickup ? { isPickup: true } : {}),
     status: row.status,
     customerId: row.customer_id,
     statusTimeline: row.status_timeline ?? [],
@@ -197,6 +198,7 @@ function orderToRow(o: IOrder) {
     utensils: o.utensils ?? 0,
     payment_method: o.paymentMethod ?? null,
     delivery_mode: o.deliveryMode ?? 'instant',
+    is_pickup: Boolean(o.isPickup),
     appointment_time: o.appointmentTime ?? null,
     rider_name: o.riderName ?? null,
     rider_phone: o.riderPhone ?? null,
@@ -247,16 +249,37 @@ async function upsertByKey(
 ): Promise<'updated' | 'inserted' | null> {
   const sb = supabase
   if (!sb) return null
-  const upd = await sb.from(table).update(row).eq(keyColumn, keyValue).select('id')
+
+  /** 列还没建（42703 undefined_column）时，把新增列剔掉再试一次，避免"整单写不进去" */
+  const stripNewColumns = (payload: Record<string, unknown>) => {
+    const next = { ...payload }
+    delete next.is_pickup
+    return next
+  }
+  const isMissingColumn = (err: { code?: string; message?: string } | null) =>
+    !!err && (err.code === '42703' || /column .* does not exist/i.test(err.message || ''))
+
+  let payload = row
+  let upd = await sb.from(table).update(payload).eq(keyColumn, keyValue).select('id')
+  if (upd.error && isMissingColumn(upd.error)) {
+    // 例如 is_pickup 还没跑迁移：降级重试（自取单退化成普通外卖单，其余照常）
+    console.warn('[orders] ' + table + ' 缺列，降级重试：', upd.error.message)
+    payload = stripNewColumns(payload)
+    upd = await sb.from(table).update(payload).eq(keyColumn, keyValue).select('id')
+  }
   if (upd.error) {
     console.warn('[orders] 更新 ' + table + ' 失败', keyValue, upd.error.message)
     return null
   }
   if ((upd.data?.length ?? 0) > 0) return 'updated'
-  const ins = await sb.from(table).insert(row).select('id')
+  let ins = await sb.from(table).insert(payload).select('id')
+  if (ins.error && isMissingColumn(ins.error)) {
+    payload = stripNewColumns(payload)
+    ins = await sb.from(table).insert(payload).select('id')
+  }
   if (!ins.error) return 'inserted'
   if (ins.error.code === '23505') {
-    const retry = await sb.from(table).update(row).eq(keyColumn, keyValue).select('id')
+    const retry = await sb.from(table).update(payload).eq(keyColumn, keyValue).select('id')
     if (!retry.error && (retry.data?.length ?? 0) > 0) return 'updated'
     console.warn('[orders] 重试更新 ' + table + ' 失败', keyValue, retry.error?.message)
     return null

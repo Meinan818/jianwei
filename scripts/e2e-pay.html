@@ -1,0 +1,111 @@
+<!doctype html>
+<!--
+  顾客支付回归：待支付订单点「确认支付」应当成功跳转、且**不能**弹「支付失败」
+  用法：node scripts/e2e-smoke.mjs scripts/e2e-pay.html customer
+-->
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>E2E 支付</title></head>
+<body style="font:12px/1.5 monospace">
+<pre id="log">[start]</pre>
+<iframe id="app" src="/" style="width:420px;height:820px;border:1px solid #ccc"></iframe>
+<script>
+const out = document.getElementById('log')
+const log = (m) => { out.textContent += '\n' + m }
+const sleep = (ms) => new Promise(r => setTimeout(r, ms))
+const app = document.getElementById('app')
+const doc = () => app.contentDocument
+const win = () => app.contentWindow
+let pass = false
+let skipped = false
+
+async function waitFor(fn, timeout = 25000, label = '') {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeout) {
+    try { const r = fn(); if (r) return r } catch (e) { /* not ready */ }
+    await sleep(200)
+  }
+  throw new Error('等待超时: ' + label)
+}
+const btn = (text) => [...doc().querySelectorAll('button,a')].find(e => e.textContent.trim().includes(text))
+function setInput(el, value) {
+  const w = win()
+  const setter = Object.getOwnPropertyDescriptor(w.HTMLInputElement.prototype, 'value').set
+  setter.call(el, value)
+  el.dispatchEvent(new w.Event('input', { bubbles: true }))
+}
+function readOrders() {
+  const store = win().localStorage
+  for (let i = 0; i < store.length; i++) {
+    const k = store.key(i)
+    if (k && k.indexOf('food_delivery_orders') >= 0) {
+      try { const arr = JSON.parse(store.getItem(k)); if (Array.isArray(arr)) return arr } catch (e) { /* ignore */ }
+    }
+  }
+  return []
+}
+const flat = () => (doc().body.innerText || '').replace(/\n+/g, ' | ')
+
+;(async () => {
+  try {
+    await new Promise(r => app.addEventListener('load', r, { once: true }))
+    await waitFor(() => doc().body.innerText.includes('顾客端'), 20000, '启动页')
+    btn('顾客端').click()
+    await waitFor(() => doc().querySelector('input[placeholder*="手机号"]'), 20000, '登录页')
+    const pwdTab = btn('密码')
+    if (pwdTab) { pwdTab.click(); await sleep(400) }
+    setInput(doc().querySelector('input[placeholder*="手机号"]'), '13800000001')
+    setInput(doc().querySelector('input[type="password"]'), '123456')
+    const agree = btn('我已阅读并同意')
+    if (agree) { agree.click(); await sleep(300) }
+    ;[...doc().querySelectorAll('button')].find(b => b.textContent.trim() === '登录').click()
+    await waitFor(() => (win().location.hash || '').includes('/customer'), 30000, '进入顾客端')
+    win().location.hash = '#/customer/orders'
+    await sleep(4200)
+    log('① 顾客端登录并拉取订单')
+
+    const pending = readOrders().filter(o => o.status === 'pending_payment')
+    log('② 待支付订单 ' + pending.length + ' 笔')
+    if (pending.length === 0) {
+      log('⚠ 没有待支付订单，跳过（先下一单不付款）')
+      skipped = true
+      throw { skip: true }
+    }
+    const target = pending[pending.length - 1]
+    // 深链会被导航系统兜底回首页，所以走应用内路径：订单列表 → 待支付 → 去支付
+    btn('待支付').click()
+    await sleep(1500)
+    const payEntry = btn('去支付')
+    if (!payEntry) throw new Error('订单列表里没有「去支付」按钮')
+    payEntry.click()
+    await sleep(3500)
+    log('③ 已进入收银台(' + win().location.hash + ')：' + flat().slice(0, 90))
+
+    const payBtn = btn('确认支付')
+    if (!payBtn) throw new Error('找不到「确认支付」按钮')
+    payBtn.click()
+    await sleep(900)
+    const toastEl = doc().querySelector('[data-sonner-toast]')
+    const toastText = toastEl ? (toastEl.innerText || '').replace(/\n+/g, ' ') : '(没看到提示)'
+    log('④ 支付后提示：' + toastText)
+    await sleep(3200)
+    const hash = win().location.hash || ''
+    const paidOrder = readOrders().find(o => o.id === target.id) || {}
+    log('⑤ 当前路由：' + hash + '；订单状态：' + paidOrder.status)
+    if (toastText.indexOf('支付失败') >= 0) throw new Error('支付成功却提示支付失败')
+    if (!hash.includes('payment/success')) throw new Error('没有跳到支付成功页')
+    if (paidOrder.status !== 'pending') throw new Error('订单状态没有变成待接单')
+    pass = true
+    log('✅ 支付正常：无失败提示、已跳成功页、订单进入待接单')
+  } catch (e) {
+    if (e && e.skip) { /* 已记录 */ }
+    else {
+      log('❌ 测试异常: ' + (e && e.message ? e.message : String(e)))
+      try { log('   页面文字: ' + flat().slice(0, 200)) } catch (e2) { /* ignore */ }
+    }
+  }
+  log('SMOKE_RESULT=' + (skipped ? 'SKIP' : (pass ? 'PASS' : 'FAIL')))
+  log('[done]')
+})()
+</script>
+</body>
+</html>

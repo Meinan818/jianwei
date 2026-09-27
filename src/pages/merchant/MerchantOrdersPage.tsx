@@ -35,7 +35,7 @@ export default function MerchantOrdersPage() {
   const navigateTab = useNavigateTab()
   const navigatePush = useNavigatePush()
   const { user } = useAuth()
-  const { orders, getShopOrders, getShopRefundRequests, merchantAccept, merchantReject, merchantMarkReady, handleRefund, cleanupExpiredPendingAccept, isAcceptExpired } = useOrders()
+  const { orders, getShopOrders, getShopRefundRequests, merchantAccept, merchantReject, merchantMarkReady, advanceToStatus, handleRefund, cleanupExpiredPendingAccept, isAcceptExpired } = useOrders()
   const { isShopOpen } = useShopStatus()
 
   // 挂载时执行超时订单校准
@@ -81,6 +81,13 @@ export default function MerchantOrdersPage() {
     toast.info('已拒单')
     setRejectOrderId(null)
     setRejectReason('')
+  }
+
+  /** 到店自取：商家确认顾客已取餐 → 订单直接完成（状态机允许 ready → delivered） */
+  const handleCompletePickup = (orderId: string) => {
+    const result = advanceToStatus(orderId, 'delivered')
+    if (result) toast.success('已确认顾客取餐，订单完成')
+    else toast.info('订单状态已变化，请刷新看看')
   }
 
   const handleMarkReady = (orderId: string) => {
@@ -422,9 +429,21 @@ export default function MerchantOrdersPage() {
                         </motion.button>
                       </div>
                     )}
-                    {order.status === 'ready' && (
+                    {order.status === 'ready' && (order.isPickup ? (
+                      <div className="flex items-center justify-end gap-2 w-full">
+                        <span className="text-xs text-muted-foreground">到店自取 · 等顾客到店</span>
+                        <motion.button
+                          whileTap={{ scale: 0.9 }}
+                          onClick={() => handleCompletePickup(order.id)}
+                          className="h-8 px-4 rounded-full bg-foreground text-background text-xs font-medium flex items-center gap-1"
+                        >
+                          <Check className="size-3.5" />
+                          顾客已取餐
+                        </motion.button>
+                      </div>
+                    ) : (
                       <span className="text-xs text-muted-foreground">等待骑手抢单...</span>
-                    )}
+                    ))}
                     {(order.status === 'picked' || order.status === 'delivering') && (
                       <div className="flex items-center gap-1 text-xs text-muted-foreground">
                         <span>骑手配送中</span>

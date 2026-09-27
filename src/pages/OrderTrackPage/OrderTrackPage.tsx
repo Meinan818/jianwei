@@ -378,6 +378,35 @@ export default function OrderTrackPage() {
           </div>
         </motion.div>
 
+        {/* 到店自取提示卡：自取单不显示骑手，改为提示到店取餐 */}
+        {order.isPickup && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+            className="mx-4 -mt-3 bg-card rounded-xl border border-border/50 p-4 shadow-sm relative z-10"
+          >
+            <div className="flex items-center gap-3">
+              <div className="size-12 rounded-full bg-foreground/5 flex items-center justify-center shrink-0">
+                <Store className="size-5 text-foreground/70" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold text-foreground">到店自取</span>
+                  <span className="text-[10px] text-muted-foreground px-1.5 py-0.5 bg-muted rounded">自取</span>
+                </div>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {order.status === 'delivered'
+                    ? '已取餐，感谢光临'
+                    : order.status === 'ready'
+                      ? '已出餐，请到店凭订单号取餐'
+                      : '备餐中，出餐后可到店取餐'}
+                </p>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
         {/* 骑手信息卡 */}
         {hasRider && (
           <motion.div
