@@ -111,12 +111,18 @@ export default function MerchantDishesPage() {
     if (!shop) return []
     const cat = shop.categories.find(c => c.id === categoryId)
     const base: DishWithOverride[] = (cat?.dishes || []).map(d => {
-      const ds = status?.dishes[d.id] || { price: d.price, soldOut: false, onShelf: true, stock: -1 }
+      // 本机覆盖优先；没有覆盖就用数据库读回来的基础值（上下架/售罄/库存）
+      const ds = status?.dishes[d.id] || {
+        price: d.price,
+        soldOut: d.soldOut ?? false,
+        onShelf: d.onShelf ?? true,
+        stock: d.stock ?? -1,
+      }
       return {
         id: d.id,
         name: d.name,
         description: d.description,
-        price: d.price,
+        price: ds.price,
         image: d.image,
         status: ds,
       }

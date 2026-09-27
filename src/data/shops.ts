@@ -22,6 +22,12 @@ export interface IDish {
   categoryId: string
   specs?: IDishSpec[]       // 单选规格组（如辣度、份量）
   extras?: IDishExtra[]     // 可选加料（多选，每项加价）
+  // —— 第 2 期 2h：商家侧配置的「可上云字段」（数据库 dishes 表的同名列）——
+  // 从数据库读回来的店铺会带上它们；内置演示店铺（MOCK_SHOPS）没有这几个字段，
+  // 读取方一律按 onShelf ?? true / soldOut ?? false / stock ?? -1 兜底。
+  onShelf?: boolean         // 是否上架
+  soldOut?: boolean         // 是否售罄
+  stock?: number            // -1 表示不限库存
 }
 
 export interface IShopCategory {
@@ -87,6 +93,7 @@ export interface IShop {
   activities?: IShopActivity[] // 全部营销活动
   appointmentSlots?: IAppointmentSlot[] // 预约时段
   supportAppointment?: boolean // 是否支持预约
+  isOpen?: boolean            // 营业开关（第 2 期 2h：从数据库 shops.is_open 读回）
 }
 
 export interface IBanner {
@@ -560,6 +567,31 @@ export function setRemoteShops(shops: IShop[] | null) {
 /** 当前是否已使用数据库中的店铺数据（供调试与测试断言用） */
 export function isRemoteShopsLoaded(): boolean {
   return remoteShops !== null
+}
+
+/**
+ * 第 2 期 2h：写库成功后的「本地即时回显」。
+ *
+ * 商家改配置时先改本地、再写数据库；数据库那一趟是异步的，
+ * 这里直接用同一个值更新内存缓存并派发事件，界面就不会出现
+ * 「改完闪回旧值、等下次重拉才变」的抖动。
+ *
+ * 缓存还没加载（未登录 / 未配置 Supabase）时返回 false，调用方据此保留本地覆盖。
+ */
+export function patchRemoteShops(mutate: (shops: IShop[]) => void): boolean {
+  if (!remoteShops) return false
+  try {
+    mutate(remoteShops)
+  } catch (err) {
+    console.warn('[shops] 更新店铺缓存失败', err)
+    return false
+  }
+  try {
+    window.dispatchEvent(new CustomEvent(SHOPS_CHANGE_EVENT))
+  } catch {
+    // ignore（非浏览器环境）
+  }
+  return true
 }
 
 /**

@@ -63,6 +63,14 @@ export interface IShopStatus {
     minOrder: number
     deliveryFee: number
     monthSales: number // 店铺月售（动态累加）
+    /**
+     * 第 2 期 2h：本机改过、还没成功写入数据库的店铺级字段。
+     *
+     * 店铺级字段（营业开关/公告/营业时间/起送价/配送费）在数据库里也有对应列，
+     * 本机覆盖层只是「改的瞬间先顶上」；写库成功后标记会被清掉，
+     * 之后每次重拉数据库都会用新值刷新本机——否则客户端会一直显示登录那一刻的旧公告。
+     */
+    localEdited?: Partial<Record<'isOpen' | 'announcement' | 'businessHours' | 'minOrder' | 'deliveryFee', boolean>>
     // 自定义分类（商家新增的分类，叠加在原始分类后）
     customCategories: ICustomCategory[]
     // 菜品覆盖配置: dishId -> { price, soldOut, onShelf, stock, image?, sales? }

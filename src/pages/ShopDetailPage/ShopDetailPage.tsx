@@ -82,6 +82,8 @@ export default function ShopDetailPage() {
        // 基础菜品 + 状态覆盖
       const baseDishes = cat.dishes.map(dish => {
         const ds = status?.dishes[dish.id]
+        // 第 2 期 2h：本机没有覆盖时用数据库读回来的值，
+        // 这样商家在另一台设备下架/售罄的菜，顾客端（刷新或收到推送后）会正确置灰
         return {
           id: dish.id,
           name: ds?.name || dish.name,
@@ -89,9 +91,9 @@ export default function ShopDetailPage() {
           price: ds?.price ?? dish.price,
           image: ds?.image || dish.image,
           sales: ds?.sales ?? dish.sales,
-          onShelf: ds?.onShelf ?? true,
-          soldOut: ds?.soldOut ?? false,
-          stock: ds?.stock ?? -1,
+          onShelf: ds?.onShelf ?? dish.onShelf ?? true,
+          soldOut: ds?.soldOut ?? dish.soldOut ?? false,
+          stock: ds?.stock ?? dish.stock ?? -1,
           isCustom: false,
           specs: ds?.specs?.length ? ds.specs.map(s => ({ id: s.id, name: s.name, options: s.options })) : dish.specs,
           extras: ds?.extras?.length ? ds.extras.map(e => ({ id: e.id, name: e.name, price: e.price })) : dish.extras,

@@ -48,6 +48,26 @@ export function ensureShopsLoaded(): Promise<void> {
   return inflight
 }
 
+/**
+ * 强制从数据库重拉一次（供 Realtime 推送与商家写入成功后的回填使用）。
+ * 与 ensureShopsLoaded 的区别：不吃「已加载过」的短路。
+ */
+export async function reloadShops(): Promise<void> {
+  if (!supabase) return
+  if (inflight) return inflight
+  inflight = (async () => {
+    try {
+      await loadShops()
+      loaded = true
+    } catch (err) {
+      console.warn('[shops] 重新加载店铺失败，继续使用上一次的数据', err)
+    } finally {
+      inflight = null
+    }
+  })()
+  return inflight
+}
+
 /** 退出登录 / 切换账号时清空缓存，避免把上一个账号看到的数据留在内存里 */
 export function resetShopsCache() {
   loaded = false
@@ -118,6 +138,11 @@ async function loadShops(): Promise<void> {
       image: d.image_url ?? '',
       sales: num(d.sales),
       categoryId: d.category_id,
+      // 第 2 期 2h：商家侧配置（上下架 / 售罄 / 库存）也从数据库读回来，
+      // 这样「另一台设备上改的」在刷新后就能看到。
+      onShelf: d.on_shelf == null ? true : Boolean(d.on_shelf),
+      soldOut: Boolean(d.sold_out),
+      stock: d.stock == null ? -1 : num(d.stock, -1),
       ...(specs && specs.length > 0 ? { specs } : {}),
       ...(exts && exts.length > 0 ? { extras: exts } : {}),
     }
@@ -179,6 +204,8 @@ async function loadShops(): Promise<void> {
       ...(s.packing_fee != null ? { packingFee: num(s.packing_fee) } : {}),
       ...(s.free_delivery_min != null ? { freeDeliveryMin: num(s.free_delivery_min) } : {}),
       ...(s.support_appointment != null ? { supportAppointment: Boolean(s.support_appointment) } : {}),
+      // 第 2 期 2h：营业开关也在数据库里（商家打烊后顾客端能看到、且不能下单）
+      isOpen: s.is_open == null ? true : Boolean(s.is_open),
       ...(s.appointment_slots ? { appointmentSlots: s.appointment_slots as { label: string; available: boolean }[] } : {}),
       ...(acts.length > 0 ? { activities: acts } : {}),
       ...(fullReduce

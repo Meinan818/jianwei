@@ -12,22 +12,27 @@
  * 降级：未配置 Supabase、未登录、断网或订阅失败时全部静默降级，
  *   退回第 2 期「要手动刷新才看得到」的行为，绝不阻断页面。
  *
- * ⚠️ 数据库侧的两个前提（见 supabase/migrations/20260927000000_realtime_replica_identity.sql）：
- *   1) 表必须加入 supabase_realtime publication（orders / messages 已有，conversations 本次补上）；
- *   2) orders 的 RLS 策略 reads orders.* 多列，需要 REPLICA IDENTITY FULL，
- *      否则订单更新的推送会被静默丢弃。
+ * ⚠️ 数据库侧的前提：表必须加入 supabase_realtime publication，变更事件才会发出。
+ *   init 脚本已包含 orders / order_items / messages 等；
+ *   conversations 与商家侧配置表（shops / categories / dishes / shop_activities / 规格加料）
+ *   由 supabase/migrations/20260927000000_realtime_conversations.sql 与
+ *   20260927010000_realtime_shop_config.sql 补上（两段都可重复执行）。
+ *
+ *   注：**不需要** REPLICA IDENTITY FULL——本项目收到推送一律重新查库、不读事件载荷；
+ *   这一点用 scripts/verify-realtime.mjs 对真实数据库实测确认过（见 docs/交接说明.md）。
  */
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
 
 /** 需要「收到变化后重拉」的数据类别 */
-export type RealtimeKind = 'orders' | 'messages'
+export type RealtimeKind = 'orders' | 'messages' | 'shops'
 
 type RefreshHandler = () => void | Promise<void>
 
 const handlers: Record<RealtimeKind, Set<RefreshHandler>> = {
   orders: new Set(),
   messages: new Set(),
+  shops: new Set(),
 }
 
 /**
@@ -92,9 +97,14 @@ export function startRealtime(userId: string): void {
     ch.on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' }, () => schedule('orders'))
     ch.on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => schedule('messages'))
     ch.on('postgres_changes', { event: '*', schema: 'public', table: 'conversations' }, () => schedule('messages'))
+    // 第 2 期 2h：商家侧配置（上下架、改价、活动、店铺公告…）变化后重拉店铺数据，
+    // 这样商家在商家端改完，顾客端不刷新就能看到新价格/下架状态。
+    for (const table of ['shops', 'categories', 'dishes', 'shop_activities', 'dish_spec_groups', 'dish_spec_options', 'dish_extras']) {
+      ch.on('postgres_changes', { event: '*', schema: 'public', table }, () => schedule('shops'))
+    }
     ch.subscribe(status => {
       if (status === 'SUBSCRIBED') {
-        console.info('[realtime] 已订阅订单与消息的实时变更')
+        console.info('[realtime] 已订阅订单、消息与店铺配置的实时变更')
       } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
         // 不弹提示：断线时功能退回「手动刷新」，用户无感知地继续可用
         console.warn(`[realtime] 订阅状态 ${status}，实时刷新暂停（不影响页面其他功能）`)

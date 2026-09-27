@@ -293,19 +293,24 @@ if (initOk) {
     console.log('断言查询失败：' + e.message);
   }
 
-  // ── 8. 断言：第 3 期 Realtime 的前提——四张订阅的表都在实时通道里 ────────
-  //    没进 publication 的表，变更事件根本不会发出（第 3 期补的就是漏掉的 conversations）。
+  // ── 8. 断言：Realtime 的前提——订阅的表都在实时通道里 ──────────────────
+  //    没进 publication 的表，变更事件根本不会发出
+  //    （第 3 期补的是漏掉的 conversations；第 2 期 2h 补的是商家侧配置表）。
   //    "SQL 没报错"不等于"实时推送能用"，所以这里显式查一遍。
   //
   //    注：**不**断言 REPLICA IDENTITY FULL。曾经推断"orders 的读策略要读多列，
   //    默认 replica identity 会让更新事件被静默丢弃"，但用 scripts/verify-realtime.mjs
   //    对真实数据库实测后推翻了该推断（两个演示账号互测，默认设置下商家端正常收到推送）。
-  console.log('\n── 8. 断言：Realtime 前提（订阅的四张表都在 publication 里）──');
+  console.log('\n── 8. 断言：Realtime 前提（订阅的表都在 publication 里）──');
   try {
     const r = await db.query(`
       select t.name as table_name,
              (p.tablename is not null) as in_pub
-        from (values ('orders'), ('order_items'), ('messages'), ('conversations')) as t(name)
+        from (values
+                ('orders'), ('order_items'), ('messages'), ('conversations'),
+                ('shops'), ('categories'), ('dishes'),
+                ('shop_activities'), ('dish_spec_groups'), ('dish_spec_options'), ('dish_extras')
+             ) as t(name)
         left join pg_publication_tables p
                on p.pubname = 'supabase_realtime'
               and p.schemaname = 'public'
@@ -317,7 +322,7 @@ if (initOk) {
     if (missing.length > 0) {
       console.log(`❌ 这些表不在 supabase_realtime 里，它们的变更不会推送：${missing.join('、')}`);
     } else {
-      console.log('✅ orders / order_items / messages / conversations 均在 supabase_realtime 中');
+      console.log('✅ 订单、消息、会话与商家侧配置表均在 supabase_realtime 中');
     }
   } catch (e) {
     console.log('断言查询失败：' + e.message);
