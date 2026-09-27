@@ -20,8 +20,8 @@
   3. 部署到 Cloudflare Pages 上线演示（**已完成**：https://jianwei-57i.pages.dev/ ）；
   4. 实时推送（第 3 期，**✅ 已上线（第八版）**：数据库里改一行，其他端不刷新就能看到；
      补一条 SQL（conversations 进 Realtime publication）仍待执行，见第 6 节「第 3 期」与 §1.1）；
-  5. 续做（第 2 期已于 2026-09-27 全部完成）：商家侧配置类写操作上云（上下架/营销编辑）、
-     通知中心跨设备（notifications 表订阅）、第 4 期图片上云（Storage，可选）、作品集材料（可选）。
+  5. 续做（第 2 期含 2h 已于 2026-09-27 全部完成，含商家侧配置类写操作上云）：
+     通知中心跨设备（notifications 表订阅）、骑手位置实时、第 4 期图片上云（Storage，可选）、作品集材料（可选）。
 - **给人看的交接摘要见 `docs/交接说明.md`**（含演示账号、演示脚本、线上资产清单、已知的坑）。
 - 原生套壳 App（Android/iOS 安装包）不是目标，产品形态是**移动端竖屏网页应用**。
 
@@ -29,12 +29,12 @@
 
 | 项 | 现状 |
 |---|---|
-| 线上站点 | **第十版**（第 2 期数据上云全部完成；第八版起跨设备看新订单/新消息**不用刷新**） |
+| 线上站点 | **第十一版**（第 2 期含 2h 商家配置上云，全部完成；第八版起跨设备看新订单/新消息**不用刷新**） |
 | 本地 `main` | 与 `origin/main` 同步 |
-| 关键提交 | `3a9d6b1` 第 3 期实时推送；`ded36a4` 2d 地址；`0866a2b` 2e 评价/售后/异常；`477e16f` 2f 优惠券；`92d623b` 2g 钱包 |
-| 已在真机验证 | `node scripts/verify-realtime.mjs`：顾客改单 → 商家端不刷新即收到 |
-| 尚未验证 | 浏览器里的实际观感（两台设备开着页面互看）；2e/2f/2g 的浏览器端到端演示 |
-| 待人工操作 | 在 Supabase 跑 `20260927000000_realtime_conversations.sql`（不跑不影响订单/消息实时，仅会话已读/新会话不实时） |
+| 关键提交 | `4f2b3ea` 2h 商家配置上云；`3a9d6b1` 第 3 期实时推送；`ded36a4` 2d 地址；`0866a2b` 2e 评价/售后/异常；`477e16f` 2f 优惠券；`92d623b` 2g 钱包 |
+| 已在真机验证 | `node scripts/verify-realtime.mjs`（顾客改单 → 商家端不刷新即收到）；`node scripts/verify-merchant-config.mjs`（商家改菜品/店铺/活动写得进库、越权写被 RLS 拦、顾客账号能读到商家改的新价） |
+| 尚未验证 | 浏览器里的实际观感（两台设备开着页面互看）；2e/2f/2g/2h 的浏览器端到端演示 |
+| 待人工操作 | 在 Supabase 跑 `supabase/migrations/20260927010000_realtime_shop_config.sql`（商家配置与会话的实时推送；**只跑这一份即可**，它同时覆盖了旧的 conversations 那份。不跑只是另一端要刷新一下，功能照常） |
 
 > 开工前若发现本地还有**未 push 的提交**，先跟用户确认要不要推，不要把半成品直接推上线。
 
@@ -119,6 +119,8 @@ rejected         商家拒单（终态）
   （`src/data/realtime.ts`：收到推送 → 调用各模块自己的「从数据库重拉」 → 再派发原来的 CustomEvent）。
   这样页面与业务逻辑一行都不用改；未配置 Supabase / 未登录 / 断网时订阅是空操作，
   自动退回原来的「手动刷新才看得到」，不会白屏。
+- **2h 起店铺配置也走同一套**：`useShops` 注册 `shops` 类别 → `reloadShops()` 重拉店铺/分类/菜品/活动，
+  所以商家在商家端上下架、改价、改活动之后，顾客端**不刷新**就能看到（前提是那张 SQL 已执行）。
 - **IM 排版硬约束**：本人消息整行靠右、本人头像最右贴边、气泡在头像左侧；对方头像最左、消息靠左。**没有自动回复功能（曾被删除，禁止恢复）**。
 - 聊天页订单条/店铺条、快捷短语只在有数据时渲染。
 
@@ -164,6 +166,10 @@ rejected         商家拒单（终态）
   - 跑完后的自检期望：shops=9、categories=26、dishes=62、coupons=6、auth.users=3。
   - 图片存站点根相对路径 `/images/xxx.jpg`（前端 `public/images/` 下 11 张真实图片），不依赖原托管平台。
 - `supabase/gen/gen_seed.py`：seed 生成器（改演示数据后 `python3 supabase/gen/gen_seed.py > supabase/migrations/20260915010000_seed_demo.sql`）。
+- `supabase/migrations/20260927000000_realtime_conversations.sql` 与
+  `20260927010000_realtime_shop_config.sql`：把 `conversations` 与商家侧配置表
+  （shops/categories/dishes/shop_activities/规格加料）补进 `supabase_realtime` publication；
+  **后者已经把前者包含在内，只需要跑后者**（两份都可重复执行）。
 - `docs/Supabase控制台操作清单.md`：在 Supabase 控制台的逐步操作手册。
 - `docs/简味点单-Supabase数据库设计稿.html`：数据库设计可视化（ER 图、枚举、RLS 说明），浏览器直接打开。
 
@@ -250,7 +256,17 @@ rejected         商家拒单（终态）
       成长值/累计消费同步 `profiles.growth_points/total_spent`；会员等级不入库、按成长值现算。
     - ⚠️ 登录后钱包余额 0、流水/提现记录为空是**正常初始状态**（seed 不预置余额，充值即真实入库）；
       支付密码继续本地 Mock（`profiles.pay_password` 保留默认值不参与校验）；`point_records` 暂不写（无积分明细展示）。
-  - ⏳ **未做**：商家侧配置类写操作（上下架/营销活动编辑）仍在本机 localStorage；
+  - ✅ **2h 商家侧配置写操作上云已完成（2026-09-27，第十一版）**：新增 `src/data/shop-config-remote.ts`，
+    把商家端的「上下架 / 售罄 / 价格 / 库存 / 名称描述 / 店铺公告·营业时间·起送价·配送费·营业开关 /
+    营销活动增删改启停（含满减老接口）/ 新增菜品」全部改成「本地先行 + 尽力写数据库」。
+    - 核心取舍：**写库成功后把字段交还给数据库**（清掉本地覆盖），否则本机覆盖会永远盖住别处的改动；
+      写库失败/未登录/内置演示数据时静默退回纯本机，行为与改造前一致。
+    - 读路径改为「本机覆盖 ?? 数据库基础值」：菜品上下架/售罄/库存、店铺营业开关与公告因此能跨设备生效
+      （`ShopDetailPage` 顾客端、`MerchantDishesPage` 商家端都已按数据库值显示）。
+    - `useShopStatus` 不再为**每一道菜**预置默认覆盖（老做法会把 `onShelf:true` 写进本机、永久盖住数据库），
+      并在店铺数据到达后做一次老数据清理与店铺级字段对齐（`pruneSeededDishOverrides` / `reconcileShopFields`）。
+    - 自检脚本 `scripts/verify-merchant-config.mjs`：真连数据库验证三类写操作 + 越权对照 + 跨账号可见性（改完自动还原）。
+  - ⏳ **未做**：规格/加料与分类管理（新增·重命名·删除分类）仍只在本机；菜品换图是 base64（超大图不入库，等第 4 期 Storage）；
     `point_records` 积分流水；通知中心跨设备（notifications 表未订阅）；骑手位置实时同步。
     注意：**前端内置演示数据的店铺 id 是 `'1'`~`'8'`，数据库是 UUID**——2b 做下单时必须用数据库 id，
     否则订单会引用到不存在的店铺。
@@ -266,11 +282,12 @@ rejected         商家拒单（终态）
     本地有改动（刚点接单/出餐、刚把未读清零）的订单/会话以本地为准，
     否则会被数据库里的旧值弹回去、而且再也写不回去。
     登录/换账号时的首次拉取仍是"以数据库为准"，与第 2 期行为一致。
-  - ⚠️ **需要执行一条 SQL 才完全生效**：`supabase/migrations/20260927000000_realtime_conversations.sql`
-    ——把 `conversations` 加进 `supabase_realtime` publication。
-    orders / order_items / messages 本来就在通道里（init 脚本加的），**唯独 conversations 漏了**；
-    不补的后果：对方把会话标记已读、或新建会话时这边不实时刷新，
-    要等有新消息、由 messages 的事件把会话一起重拉回来才同步。
+  - ⚠️ **需要执行一条 SQL 才完全生效**：`supabase/migrations/20260927010000_realtime_shop_config.sql`
+    ——把 `conversations` 与商家侧配置表（shops / categories / dishes / shop_activities / 规格加料）
+    一起加进 `supabase_realtime` publication。**只跑这一份即可**，它已覆盖旧的
+    `20260927000000_realtime_conversations.sql`（两份都可重复执行，跑重了也无副作用）。
+    不补的后果：对方把会话标记已读、新建会话，或商家改了菜品/店铺配置时，这边不实时刷新，
+    要等下次手动刷新/重新登录才同步（订单与消息的实时不受影响，它们本来就在通道里）。
   - ✅ **实测结论（2026-09-27，`node scripts/verify-realtime.mjs`，两个演示账号互测）**：
     顾客改单后，商家端在**默认 replica identity 下**正常收到推送，**不需要** `REPLICA IDENTITY FULL`。
     （一开始推断"orders 的读策略 `can_see_order` 要读多列，默认设置下更新事件会被静默丢弃"，
@@ -328,6 +345,8 @@ rejected         商家拒单（终态）
 5. 每次动手前先 `git status`，若发现用户自己改的、尚未存档的内容，一并提交，**不要覆盖**。
 6. 本机 git 访问 GitHub 依赖代理配置 `http.https://github.com.proxy`（FlClash 的本地混合端口）。**代理未开启、或端口变了，推送都会失败，此时提醒用户开启代理，不要反复重试。**
    - 2026-09-27 记录：端口最初是 `7890`，后发现 FlClash 已改用 `10909`（与 Windows 系统代理设置一致），配置已更新为 `http://127.0.0.1:10909`。
+  - 2026-09-27 再次记录：端口又变为 `10910`（FlClash 重排端口），注册表 `ProxyServer` 与 git 配置一致，
+    即 `http://127.0.0.1:10910`；以后端口再变，先读注册表再同步 git 配置。
    - 2026-09-27 补充：FlClash **开 TUN 模式时**系统代理是关闭的（注册表 `ProxyEnable=0`）、也没有任何 HTTP 代理端口在监听（核心进程只监听 53 做 DNS），
      此时 git 里配置的代理端口必然连不上——先查 FlClash 当前模式；TUN 模式下用
      `git -c http.https://github.com.proxy= push` 绕过代理直连即可（TUN 会接管流量）。
