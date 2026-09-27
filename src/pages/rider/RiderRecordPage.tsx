@@ -44,7 +44,8 @@ export default function RiderRecordPage() {
   const { user } = useAuth()
   const { getRiderHistoryOrders, getRiderStats, orders } = useOrders()
 
-  const riderId = user.riderId || 'R001'
+  // 2026-09-28 修复：骑手身份用 profiles.id（uuid），工号只用于展示；钱包/提现的本机存储键随之改用 riderKey。
+  const riderKey = user.id || user.riderId || 'R001'
   const [activeTab, setActiveTab] = useState('stats')
   const [withdrawSheetOpen, setWithdrawSheetOpen] = useState(false)
   const [withdrawAmount, setWithdrawAmount] = useState('')
@@ -54,39 +55,39 @@ export default function RiderRecordPage() {
   const [riderBalance, setRiderBalance] = useState(0)
   const [withdrawRecords, setWithdrawRecords] = useState<IRiderWithdrawRecord[]>([])
 
-  const historyOrders = getRiderHistoryOrders(riderId)
-  const stats = getRiderStats(riderId)
+  const historyOrders = getRiderHistoryOrders(riderKey)
+  const stats = getRiderStats(riderKey)
 
   // 加载骑手钱包数据
   useEffect(() => {
     try {
-      const w = scopedStorage.getItem(`${RIDER_WALLET_KEY}_${riderId}`)
+      const w = scopedStorage.getItem(`${RIDER_WALLET_KEY}_${riderKey}`)
       if (w) {
         setRiderBalance(parseFloat(w) || 0)
       } else {
         // 初始：已送达订单的累计收入 - 已提现（初始为0）
         const totalEarn = historyOrders.reduce((s, o) => s + (o.riderEarning || 5), 0)
         setRiderBalance(+totalEarn.toFixed(2))
-        scopedStorage.setItem(`${RIDER_WALLET_KEY}_${riderId}`, String(+totalEarn.toFixed(2)))
+        scopedStorage.setItem(`${RIDER_WALLET_KEY}_${riderKey}`, String(+totalEarn.toFixed(2)))
       }
     } catch {
       setRiderBalance(0)
     }
     try {
-      const wr = scopedStorage.getItem(`${RIDER_WITHDRAW_KEY}_${riderId}`)
+      const wr = scopedStorage.getItem(`${RIDER_WITHDRAW_KEY}_${riderKey}`)
       if (wr) {
         setWithdrawRecords(JSON.parse(wr))
       } else {
         const demo: IRiderWithdrawRecord[] = [
-          { id: 'rw1', riderId, amount: 100, fee: 1, arriveAmount: 99, status: 'success', account: '微信钱包', accountType: 'wechat', createdAt: Date.now() - 86400000 * 7, arriveAt: Date.now() - 86400000 * 6 },
+          { id: 'rw1', riderId: riderKey, amount: 100, fee: 1, arriveAmount: 99, status: 'success', account: '微信钱包', accountType: 'wechat', createdAt: Date.now() - 86400000 * 7, arriveAt: Date.now() - 86400000 * 6 },
         ]
         setWithdrawRecords(demo)
-        scopedStorage.setItem(`${RIDER_WITHDRAW_KEY}_${riderId}`, JSON.stringify(demo))
+        scopedStorage.setItem(`${RIDER_WITHDRAW_KEY}_${riderKey}`, JSON.stringify(demo))
       }
     } catch {
       setWithdrawRecords([])
     }
-  }, [riderId, historyOrders.length])
+  }, [riderKey, historyOrders.length])
 
   // 按月分组
   const grouped = useMemo(() => {
@@ -119,7 +120,7 @@ export default function RiderRecordPage() {
     const arriveAmount = +(amount - fee).toFixed(2)
     const record: IRiderWithdrawRecord = {
       id: `rwd_${Date.now()}`,
-      riderId,
+      riderId: riderKey,
       amount,
       fee,
       arriveAmount,
@@ -131,16 +132,16 @@ export default function RiderRecordPage() {
     // 更新余额
     const newBalance = +(riderBalance - amount).toFixed(2)
     setRiderBalance(newBalance)
-    scopedStorage.setItem(`${RIDER_WALLET_KEY}_${riderId}`, String(newBalance))
+    scopedStorage.setItem(`${RIDER_WALLET_KEY}_${riderKey}`, String(newBalance))
     // 更新提现记录
     const newRecords = [record, ...withdrawRecords]
     setWithdrawRecords(newRecords)
-    scopedStorage.setItem(`${RIDER_WITHDRAW_KEY}_${riderId}`, JSON.stringify(newRecords))
+    scopedStorage.setItem(`${RIDER_WITHDRAW_KEY}_${riderKey}`, JSON.stringify(newRecords))
     // 模拟到账
     setTimeout(() => {
       const updated = newRecords.map(r => r.id === record.id ? { ...r, status: 'success' as const, arriveAt: Date.now() } : r)
       setWithdrawRecords(updated)
-      scopedStorage.setItem(`${RIDER_WITHDRAW_KEY}_${riderId}`, JSON.stringify(updated))
+      scopedStorage.setItem(`${RIDER_WITHDRAW_KEY}_${riderKey}`, JSON.stringify(updated))
     }, 2000)
     toast.success('提现申请已提交')
     setWithdrawSheetOpen(false)

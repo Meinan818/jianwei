@@ -242,14 +242,22 @@ rejected         商家拒单（终态）
       rejected 悄悄改回 pending → "订单还在、仍显示待接单、顾客端什么也看不到"，
       而库里留下一条带 `reject_reason` 却还是 pending 的畸形单。白名单已抽成 `ALL_ORDER_STATUSES`（9 态）
       并补全，未知状态会打日志而不是静默改写。
-    - 回归脚本 `scripts/e2e-reject.html`：无头浏览器真实跑「商家拒单 → 顾客端历史订单出现已拒单」。    - **购物车减号不生效（2026-09-28 修复）**：`ShopDetailPage` 的 `handleDecrease` 把 `dishId` 当成
+    - 回归脚本 `scripts/e2e-reject.html`：无头浏览器真实跑「商家拒单 → 顾客端历史订单出现已拒单」。
+    - **购物车减号不生效（2026-09-28 修复）**：`ShopDetailPage` 的 `handleDecrease` 把 `dishId` 当成
       购物车的 key 传给了 `decreaseItem()`，而购物车是按 `skuKey`（菜品 + 规格 + 加料，形如 `<uuid>____`）存的
       → 永远匹配不到，点减号数量不变。现在先按 `dishId` 找到购物车里对应的明细、再按 `skuKey` 减
       （回归脚本 `scripts/e2e-cart.html`）。
+
+    - **骑手链路写不进数据库（2026-09-28 修复）**：`orders.rider_id` 是 uuid 列（指向 `profiles.id`），
+      而骑手端页面把**工号**（`R0003`）当骑手身份传给了 `riderClaim`，写库直接被拒 →
+      抢单在本机看着成功、下一秒被「以数据库为准」的刷新打回「待抢单」（与商家拒单同一类问题）。
+      现在订单里的骑手身份统一用 `user.id`（uuid），工号只用于展示；`ChatPage` 的骑手身份也一并对齐。
+      回归脚本 `scripts/e2e-rider.html`：无头浏览器真实跑「抢单 → 确认取餐 → 开始配送 → 确认送达」。
     - **顾客被拒单提醒（2026-09-28 新增，第十二版）**：顾客端每次重拉订单时对照「本机上次见到的状态」，
       一旦变成 `rejected` 就往通知中心写一条（「订单被商家拒单」+ 原因）并弹一个 toast。
       只有顾客端读写这个「见过状态」，避免商家端在同一浏览器里操作时吃掉顾客还没看到的变化
-      （回归脚本 `scripts/e2e-reject-notify.html`）。    - **拒单后商家端"看不到"（2026-09-28 三次修复）**：`MerchantOrdersPage` 的「已完成」标签只匹配
+      （回归脚本 `scripts/e2e-reject-notify.html`）。
+    - **拒单后商家端"看不到"（2026-09-28 三次修复）**：`MerchantOrdersPage` 的「已完成」标签只匹配
       `delivered`，于是订单一旦被拒/被取消就从**所有标签**里消失（既不在待接单、也不在已完成），
       用户看到的现象是"拒单后订单没有消失也没有显示拒单"。现已把 `rejected` / `cancelled` 归入「已完成」，
       并在卡片上显示「已拒单 · 原因」「已取消 · 原因」。

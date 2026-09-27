@@ -1,0 +1,136 @@
+<!doctype html>
+<!--
+  骑手端主链路回归：抢单 → 确认到店 → 确认取餐 → 开始配送 → 确认送达
+
+  用法：node scripts/e2e-smoke.mjs scripts/e2e-rider.html rider
+  说明：会真的抢掉一单并走完配送（演示数据里可抢的单会少一张）。
+-->
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>E2E 骑手链路</title></head>
+<body style="font:12px/1.5 monospace">
+<pre id="log">[start]</pre>
+<iframe id="app" src="/" style="width:420px;height:820px;border:1px solid #ccc"></iframe>
+<script>
+const out = document.getElementById('log')
+const log = (m) => { out.textContent += '\n' + m }
+const sleep = (ms) => new Promise(r => setTimeout(r, ms))
+const app = document.getElementById('app')
+const doc = () => app.contentDocument
+const win = () => app.contentWindow
+let pass = false
+let skipped = false
+
+async function waitFor(fn, timeout = 25000, label = '') {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeout) {
+    try { const r = fn(); if (r) return r } catch (e) { /* not ready */ }
+    await sleep(200)
+  }
+  throw new Error('等待超时: ' + label)
+}
+const btn = (text) =>
+  [...doc().querySelectorAll('button,a')].find(e => e.textContent.trim().includes(text))
+function setInput(el, value) {
+  const w = win()
+  const setter = Object.getOwnPropertyDescriptor(w.HTMLInputElement.prototype, 'value').set
+  setter.call(el, value)
+  el.dispatchEvent(new w.Event('input', { bubbles: true }))
+}
+function readOrders() {
+  const store = win().localStorage
+  for (let i = 0; i < store.length; i++) {
+    const k = store.key(i)
+    if (k && k.indexOf('food_delivery_orders') >= 0) {
+      try { const arr = JSON.parse(store.getItem(k)); if (Array.isArray(arr)) return arr } catch (e) { /* ignore */ }
+    }
+  }
+  return []
+}
+const flat = () => (doc().body.innerText || '').replace(/\n+/g, ' | ')
+
+;(async () => {
+  try {
+    await new Promise(r => app.addEventListener('load', r, { once: true }))
+    await waitFor(() => doc().body.innerText.includes('骑手端'), 20000, '启动页')
+    btn('骑手端').click()
+    await waitFor(() => doc().querySelector('input[placeholder*="手机号"]'), 20000, '登录页')
+    const pwdTab = btn('密码')
+    if (pwdTab) { pwdTab.click(); await sleep(400) }
+    setInput(doc().querySelector('input[placeholder*="手机号"]'), '13800000003')
+    setInput(doc().querySelector('input[type="password"]'), '123456')
+    const agree = btn('我已阅读并同意')
+    if (agree) { agree.click(); await sleep(300) }
+    ;[...doc().querySelectorAll('button')].find(b => b.textContent.trim() === '登录').click()
+    await waitFor(() => (win().location.hash || '').includes('/rider'), 30000, '进入骑手端')
+    log('① 骑手端登录成功')
+
+    // ② 抢单大厅
+    win().location.hash = '#/rider/hall'
+    await sleep(4500)
+    const hallText = flat()
+    const poolMatch = /当前\s*(\d+)\s*单可抢/.exec(hallText)
+    const poolCount = poolMatch ? Number(poolMatch[1]) : -1
+    log('② 抢单大厅可抢单数 = ' + poolCount)
+    log('   片段：' + hallText.slice(0, 120))
+    if (poolCount === 0) {
+      log('⚠ 当前没有可抢订单，跳过（先让顾客下单 → 商家出餐）')
+      skipped = true
+      throw { skip: true }
+    }
+    const before = readOrders()
+    const claimBtn = btn('抢单')
+    if (!claimBtn) throw new Error('找不到「抢单」按钮')
+    claimBtn.click()
+    await sleep(4500)
+    const afterClaim = readOrders()
+    const claimed = afterClaim.find(o => o.riderId && (o.status === 'picked' || o.status === 'delivering'))
+    if (!claimed) {
+      log('❌ 抢单后本机没有出现「我的订单」（riderId/状态没变）')
+      throw new Error('抢单没有生效')
+    }
+    log('③ 抢单成功：订单 ' + claimed.id + ' 状态=' + claimed.status + '，本机 riderId=' + claimed.riderId)
+    log('   绑定的骑手名/电话=' + claimed.riderName + ' / ' + claimed.riderPhone)
+
+    // ③~⑥ 任务页四步
+    win().location.hash = '#/rider/tasks'
+    await sleep(4000)
+    // 抢单时已自动标记到店，所以正常是直接从确认取餐开始；若页面给了到店按钮就先点它
+    const arriveBtn0 = btn('确认到店')
+    if (arriveBtn0) { arriveBtn0.click(); await sleep(3200); log('   （先点了确认到店）') }
+    const steps = [
+      ['确认取餐', 'picked'],
+      ['开始配送', 'delivering'],
+      ['确认送达', 'delivered'],
+    ]
+    const snap = (id) => (readOrders().find(o => o.id === id) || {})
+    for (const [label, expect] of steps) {
+      const b = btn(label)
+      if (!b) {
+        log('❌ 任务页找不到按钮「' + label + '」（当前状态 ' + (snap(claimed.id).status || '?') + '）')
+        log('   片段：' + flat().slice(0, 160))
+        throw new Error('缺少按钮：' + label)
+      }
+      b.click()
+      await sleep(3500)
+      const st = (snap(claimed.id) || {}).status
+      log('   ' + label + ' → 本机状态 ' + st + '（期望 ' + expect + '）')
+      if (st !== expect) throw new Error(label + ' 后状态不是 ' + expect)
+    }
+    const finalOrder = snap(claimed.id)
+    log('④ 走完四步：状态 ' + finalOrder.status + '，送达时间=' + (finalOrder.deliveredAt ? new Date(finalOrder.deliveredAt).toLocaleTimeString('zh-CN') : '无'))
+    pass = finalOrder.status === 'delivered'
+    if (!pass) throw new Error('最终状态不是已送达')
+    log('✅ 骑手链路跑通：抢单 → 取餐 → 配送 → 送达')
+  } catch (e) {
+    if (e && e.skip) { /* 已记录 */ }
+    else {
+      log('❌ 测试异常: ' + (e && e.message ? e.message : String(e)))
+      try { log('   页面文字: ' + flat().slice(0, 200)) } catch (e2) { /* ignore */ }
+    }
+  }
+  log('SMOKE_RESULT=' + (skipped ? 'SKIP' : (pass ? 'PASS' : 'FAIL')))
+  log('[done]')
+})()
+</script>
+</body>
+</html>

@@ -188,7 +188,8 @@ function ChatPageInner() {
     const merchantId = (myRole === 'merchant' ? user.shopId : shop?.id || order?.shopId) || '1'
     const merchantName = (myRole === 'merchant' ? user.shopName : shop?.name || order?.shopName) || '商家'
     const merchantAvatar = (myRole === 'merchant' ? user.avatar : shop?.cover || order?.shopCover) || ''
-    const riderId = myRole === 'rider' ? user.riderId : order?.riderId
+    // 骑手身份与订单里的 riderId 保持一致（都用 profiles.id）
+    const riderId = myRole === 'rider' ? user.id : order?.riderId
     const riderName = myRole === 'rider' ? user.nickname : order?.riderName
     const riderAvatar = ''
 

@@ -26,7 +26,8 @@ export default function RiderTasksPage() {
   const { user } = useAuth()
   const { orders, getRiderActiveOrders, getRiderHistoryOrders, riderArriveAtStore, riderConfirmPickup, riderStartDelivery, riderDeliver, reportDeliveryException } = useOrders()
 
-  const riderId = user.riderId || 'r1'
+  // 2026-09-28 修复：订单里的骑手身份用 profiles.id（uuid），工号只用于展示。
+  const riderKey = user.id || user.riderId || 'r1'
 
   const [navOrder, setNavOrder] = useState<IOrder | null>(null)
   const [activeTab, setActiveTab] = useState<'active' | 'history'>('active')
@@ -34,8 +35,8 @@ export default function RiderTasksPage() {
   const [exceptionType, setExceptionType] = useState<DeliveryExceptionType>('other')
   const [exceptionDesc, setExceptionDesc] = useState('')
 
-  const activeOrders = getRiderActiveOrders(riderId)
-  const historyOrders = getRiderHistoryOrders(riderId)
+  const activeOrders = getRiderActiveOrders(riderKey)
+  const historyOrders = getRiderHistoryOrders(riderKey)
 
   const displayOrders = activeTab === 'active' ? activeOrders : historyOrders
 
@@ -81,7 +82,7 @@ export default function RiderTasksPage() {
     const result = reportDeliveryException(exceptionOrderId, {
       type: exceptionType,
       description: exceptionDesc,
-      reporterId: riderId,
+      reporterId: riderKey,
       reporterName: user.nickname || '骑手',
     })
     if (result) {

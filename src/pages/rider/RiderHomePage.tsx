@@ -20,13 +20,15 @@ export default function RiderHomePage() {
   const { orders, getRiderStats, poolOrders, getRiderActiveOrders } = useOrders()
   const { riderStatus, toggleRiderOnline } = useRiderStatus()
 
-  const riderId = user.riderId || 'r1'
-  const status = riderStatus[riderId]
+  // 2026-09-28 修复：订单过滤/统计用的骑手身份改成 profiles.id（uuid），工号只用于展示。
+  const riderKey = user.id || user.riderId || 'r1'
+  const riderNo = user.riderId || 'R0000'
+  const status = riderStatus[riderKey]
   const isOnline = status?.isOnline ?? true
 
-  const stats = getRiderStats(riderId)
+  const stats = getRiderStats(riderKey)
   const pool = poolOrders
-  const activeOrders = getRiderActiveOrders(riderId)
+  const activeOrders = getRiderActiveOrders(riderKey)
 
   // 今日跑单卡片数据
   const todayStats = [
@@ -37,7 +39,7 @@ export default function RiderHomePage() {
   ]
 
   const handleToggleOnline = () => {
-    toggleRiderOnline(riderId, !isOnline)
+    toggleRiderOnline(riderKey, !isOnline)
     toast.success(isOnline ? '已切换为下线休息' : '已上线，开始接单吧！')
   }
 
@@ -57,7 +59,7 @@ export default function RiderHomePage() {
             </div>
             <div>
               <h1 className="text-lg font-bold">{user.nickname || '骑手小王'}</h1>
-              <p className="text-xs text-background/70 mt-0.5">骑手 · {riderId}</p>
+              <p className="text-xs text-background/70 mt-0.5">骑手 · {riderNo}</p>
             </div>
           </div>
           <button

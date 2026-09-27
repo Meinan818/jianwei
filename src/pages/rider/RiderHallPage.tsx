@@ -14,15 +14,17 @@ export default function RiderHallPage() {
   const { poolOrders, riderClaim } = useOrders()
   const { riderStatus, toggleRiderOnline } = useRiderStatus()
 
-  const riderId = user.riderId || 'r1'
-  const isOnline = riderStatus[riderId]?.isOnline ?? true
+  // 2026-09-28 修复：订单里的骑手身份用 profiles.id（uuid）——数据库 orders.rider_id 是 uuid 列，
+  // 写工号（R0003）进去会被数据库拒掉、抢单根本存不下来；工号只用于展示。
+  const riderKey = user.id || user.riderId || 'r1'
+  const isOnline = riderStatus[riderKey]?.isOnline ?? true
 
   const handleClaim = (orderId: string) => {
     if (!isOnline) {
       toast.info('请先上线再接单')
       return
     }
-    const result = riderClaim(orderId, riderId, user.nickname || '骑手', user.phone || '')
+    const result = riderClaim(orderId, riderKey, user.nickname || '骑手', user.phone || '')
     if (result) {
       toast.success('抢单成功！快去取餐吧')
     } else {
@@ -31,7 +33,7 @@ export default function RiderHallPage() {
   }
 
   const handleToggleOnline = () => {
-    toggleRiderOnline(riderId, !isOnline)
+    toggleRiderOnline(riderKey, !isOnline)
     toast.success(!isOnline ? '已上线接单' : '已下线休息')
   }
 
