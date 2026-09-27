@@ -165,6 +165,16 @@ rejected         商家拒单（终态）
     Supabase Auth 需要真实邮箱，但**不发任何邮件**（演示环境已关闭 Confirm email）。
   - 短信验证码继续由前端 Mock（固定 `123456`），代码中注明真实短信接入点。
 - **第 2 期（业务数据）**：把 shops / shop_settings / categories / dishes / orders / order_items / addresses / messages / reviews / coupons / 会员钱包 / notifications 从 localStorage 逐步改为 Supabase 查询。**开工前先以当前前端源码为准做一次字段对账**：前端数据模型（见第 4 节，尤其 9 态订单枚举、会话 id 模型、未读三字段）与 SQL 表结构有差异时，新增 ALTER migration 补齐，不要推翻已有 24 张表。
+  - 字段对账已完成（见 `docs/后端重写-对账与设计.md`），缺口已由重写后的 migration 补齐。
+  - ✅ **2a 读取路径已完成（2026-09-27）**：店铺 / 分类 / 菜品 / 规格 / 加料 / 营销活动改从数据库读取。
+    实现方式：新增 `src/data/shops-remote.ts`（一次性并发取回并组装成前端 `IShop` 结构）
+    与 `src/hooks/useShops.ts`（登录后触发加载、订阅变更事件重渲染）；
+    `getAllShops()` **保持同步签名**，内部改为「数据库缓存 → 内置演示数据」兜底，
+    因此调用页面只需加一行 `useShops()` 订阅，不必改成异步加载态。
+    `logout()` 会清空店铺缓存，避免跨账号残留。
+  - ⏳ **未做**：订单/消息等写入路径（2b）；商家侧写操作（上下架、接单、营销配置）仍在 localStorage（2c）。
+    注意：**前端内置演示数据的店铺 id 是 `'1'`~`'8'`，数据库是 UUID**——2b 做下单时必须用数据库 id，
+    否则订单会引用到不存在的店铺。
 - **第 3 期（Realtime）**：用 Realtime 订阅替换 CustomEvent/storage 监听，实现订单状态、IM 消息、骑手位置三端实时同步。
 - **第 4 期（Storage，可选）**：用户头像、评价图、商家换图改为 Supabase Storage 上传（替换 base64）。11 张菜品图已在本地 `public/images`，可继续保留。
 - **第 5 期（Cloudflare Pages 部署）**：✅ **已完成（2026-09-27）**，线上地址 https://jianwei-57i.pages.dev/

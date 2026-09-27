@@ -11,6 +11,7 @@ import { useFavorites } from '@/hooks/useFavorites'
 import { useShopStatus } from '@/hooks/useShopStatus'
 import { useNavigatePush } from '@/hooks/useNavigationStack'
 import { getAllShops, getShopActivities } from '@/data/shops'
+import { useShops } from '@/hooks/useShops'
 import type { IDishSpec, IDishExtra, IDish } from '@/data/shops'
 import type { ICartItemSpec, ICartItemExtra } from '@/data/cart'
 import { toast } from 'sonner'
@@ -20,6 +21,9 @@ import { Input } from '@/components/ui/input'
 export default function ShopDetailPage() {
   const { id } = useParams()
   const navigatePush = useNavigatePush()
+  // 订阅店铺数据变更：登录后从数据库加载完成会自动重渲染。
+  // 否则首屏用的是内置演示数据，而路由里的 id 是数据库 UUID，会找不到店铺。
+  useShops()
   const shop = getAllShops().find(s => s.id === id)
   const { cart, addItem, decreaseItem, clearCart, totalCount, totalAmount, getItemQuantity } = useCart()
   const { getShopReviews, getShopAvgScore } = useReviews()

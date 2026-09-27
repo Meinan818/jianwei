@@ -7,6 +7,7 @@ import { Image } from '@/components/ui/image'
 import ShopCard from '@/components/ShopCard'
 import { ShopCardSkeleton } from '@/components/Skeleton'
 import { getAllShops, MOCK_BANNERS, type IShop } from '@/data/shops'
+import { useShops } from '@/hooks/useShops'
 import { MOCK_CATEGORIES } from '@/data/search-page'
 import { useNavigatePush } from '@/hooks/useNavigationStack'
 import { useCart, buildSkuKey } from '@/hooks/useCart'
@@ -28,7 +29,7 @@ export default function HomePage() {
   const navigatePush = useNavigatePush()
   const { cart, addItem, decreaseItem, totalCount, totalAmount, getDishTotalQuantity, getItemBySku } = useCart()
   const [bannerIdx, setBannerIdx] = useState(0)
-  const shops = getAllShops()
+  const { shops, dataVersion } = useShops()
   const [displayShops, setDisplayShops] = useState(() => getAllShops().slice(0, 4))
   const [loading, setLoading] = useState(false)
   const [hasMore, setHasMore] = useState(true)
@@ -139,6 +140,14 @@ export default function HomePage() {
     }, 3500)
     return () => clearInterval(timer)
   }, [])
+
+  // 数据源切换（内置演示数据 → 数据库）后重置列表，
+  // 否则 displayShops 里会残留内置数据、与 shops 不一致
+  useEffect(() => {
+    const next = getAllShops()
+    setDisplayShops(next.slice(0, 4))
+    setHasMore(next.length > 4)
+  }, [dataVersion])
 
   // 轮播同步滚动
   useEffect(() => {

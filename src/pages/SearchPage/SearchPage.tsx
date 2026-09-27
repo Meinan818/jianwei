@@ -6,12 +6,15 @@ import { scopedStorage } from '@lark-apaas/client-toolkit-lite'
 import TopNavBar from '@/components/TopNavBar'
 import ShopCard from '@/components/ShopCard'
 import { getAllShops, type IShop } from '@/data/shops'
+import { useShops } from '@/hooks/useShops'
 import { MOCK_CATEGORIES } from '@/data/search-page'
 
 const HISTORY_KEY = 'food_delivery_search_history'
 const HOT_WORDS = ['便当', '奶茶', '披萨', '寿司', '汉堡', '咖啡', '麻辣烫', '沙拉']
 
 export default function SearchPage() {
+  // 订阅店铺数据变更：登录后从数据库加载完成会重算搜索结果
+  const { dataVersion } = useShops()
   const [params] = useSearchParams()
   const [keyword, setKeyword] = useState(params.get('keyword') ?? '')
   const [activeCategory, setActiveCategory] = useState(params.get('category') ?? '1')
@@ -45,7 +48,8 @@ export default function SearchPage() {
         shop.categories.some(cat => cat.dishes.some(d => d.name.includes(keyword)))
       return matchCat && matchKw
     })
-  }, [keyword, activeCategory])
+    // dataVersion 变化 = 店铺数据从数据库加载完成，需要重算结果
+  }, [keyword, activeCategory, dataVersion])
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()

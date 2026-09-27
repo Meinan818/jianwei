@@ -3,6 +3,7 @@ import { scopedStorage, avatarImages } from '@lark-apaas/client-toolkit-lite'
 import type { IAuthUser, UserRole, IRegisteredAccount } from '@/data/auth'
 import { SIMULATED_CODE, ACCOUNTS_KEY_PREFIX } from '@/data/auth'
 import { supabase, supabaseEnabled, phoneToAuthEmail, authEmailToPhone } from '@/lib/supabase'
+import { resetShopsCache } from '@/data/shops-remote'
 
 const AUTH_KEY = 'food_delivery_auth'
 const PROFILE_KEY_PREFIX = 'food_delivery_profile_' // + role，按角色独立存昵称/头像
@@ -548,6 +549,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     saveUser(GUEST_USER)
     // 同时清掉 Supabase 会话，避免出现「界面已退出但会话还在」
     if (supabase) void supabase.auth.signOut()
+    // 清空从数据库读到的店铺缓存，避免把上一个账号看到的数据留在内存里
+    resetShopsCache()
   }, [saveUser])
 
   // —— 更新资料 ——

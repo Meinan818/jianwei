@@ -90,6 +90,17 @@ function setInput(el, value) {
       log('   Supabase 会话已写入 localStorage: ' +
         !!win().localStorage.getItem('food_delivery_supabase_auth'))
       log('   页面首段文字: ' + doc().body.innerText.slice(0, 120).replace(/\n+/g, ' | '))
+
+      // ⑦ 第 2 期校验：用「数据库里的店铺 UUID」打开详情页。
+      //    内置演示数据的 id 是 '1'~'8'，只有真的从数据库读到了数据，这个 UUID 才找得到店铺。
+      const DB_SHOP_ID = '00000000-0000-4000-8000-000000000001' // 饭否·品质快餐
+      win().location.hash = '#/customer/shop/' + DB_SHOP_ID
+      await sleep(2500)
+      const text = doc().body.innerText
+      log('⑦ 用数据库 UUID 打开店铺详情: ' + win().location.hash)
+      log('   页面含「饭否·品质快餐」: ' + text.includes('饭否·品质快餐'))
+      log('   页面含菜品「红烧肉套餐」: ' + text.includes('红烧肉套餐'))
+      log('   页面文字片段: ' + text.slice(0, 160).replace(/\n+/g, ' | '))
     } else {
       log('❌ 未能进入顾客端；提示=' + (toast || '（无 toast）'))
       log('   当前路由: ' + win().location.hash)

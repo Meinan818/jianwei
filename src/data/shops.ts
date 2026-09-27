@@ -531,7 +531,35 @@ export function getAllShops(): IShop[] {
   } catch {
     // ignore
   }
-  return [...MOCK_SHOPS, ...userShops]
+  // 第 2 期：登录后从数据库读到的店铺会写进 remoteShops 缓存；
+  // 读不到（未配置 Supabase / 未登录 / 请求失败）时退回内置演示店铺，界面行为不变。
+  const base = remoteShops ?? MOCK_SHOPS
+  return [...base, ...userShops]
+}
+
+// =============================================================================
+// 远程数据缓存（第 2 期）
+//   保持 getAllShops() 同步签名，组件代码无需改成异步；
+//   数据从数据库加载完成后通过事件通知，订阅了 useShopsVersion() 的页面自动重渲染。
+// =============================================================================
+let remoteShops: IShop[] | null = null
+
+/** 店铺数据变更事件：加载完成或清空时触发 */
+export const SHOPS_CHANGE_EVENT = 'food_delivery_shops_change'
+
+/** 供数据加载层调用：写入/清空远程店铺缓存，并通知界面刷新 */
+export function setRemoteShops(shops: IShop[] | null) {
+  remoteShops = shops
+  try {
+    window.dispatchEvent(new CustomEvent(SHOPS_CHANGE_EVENT))
+  } catch {
+    // ignore（非浏览器环境）
+  }
+}
+
+/** 当前是否已使用数据库中的店铺数据（供调试与测试断言用） */
+export function isRemoteShopsLoaded(): boolean {
+  return remoteShops !== null
 }
 
 /**
