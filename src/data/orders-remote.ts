@@ -228,12 +228,25 @@ export async function upsertOrder(order: IOrder): Promise<boolean> {
   const sb = supabase
   if (!sb) return false
   try {
-    const { error } = await sb.from('orders').upsert(orderToRow(order), { onConflict: 'id' })
-    if (error) {
-      console.warn('[orders] 写入订单失败', order.id, error.message)
-      return false
+    const row = orderToRow(order)
+    // 刻意不用 .upsert()：ON CONFLICT 的冲突分支会改用「更新」策略判定，
+    // 实测在 RLS 下会被拒（同样数据普通 INSERT 通过）。显式「先插、冲突再改」更可靠。
+    const ins = await sb.from('orders').insert(row)
+    if (ins.error) {
+      if (ins.error.code === '23505') {
+        const upd = await sb.from('orders').update(row).eq('id', order.id)
+        if (!upd.error) {
+          // 继续写明细
+        } else {
+          console.warn('[orders] 更新订单失败', order.id, upd.error.message)
+          return false
+        }
+      } else {
+        console.warn('[orders] 写入订单失败', order.id, ins.error.message)
+        return false
+      }
     }
-    // 明细：新订单才需要插入；已存在则覆盖（同一订单明细不变）
+    // 明细也需要写（新订单才需要插入；已存在则跳过）
     if (order.items?.length) {
       const rows = order.items.map((it, idx) => ({
         order_id: order.id,
@@ -248,12 +261,9 @@ export async function upsertOrder(order: IOrder): Promise<boolean> {
         extras: it.extras ?? [],
         sort: idx,
       }))
-      const { error: itemsErr } = await sb.from('order_items').upsert(rows, {
-        onConflict: 'order_id,sku_key',
-        ignoreDuplicates: true,
-      })
-      // 明细表没有 (order_id, sku_key) 唯一约束时上面会报错，退化为逐条插入并忽略重复
-      if (itemsErr) {
+      const ins2 = await sb.from('order_items').insert(rows)
+      if (ins2.error && ins2.error.code !== '23505') {
+        // 明细表没有唯一约束时会重复插入，这里按 order_id 去重兜底
         const { data: existing } = await sb.from('order_items').select('id,sku_key').eq('order_id', order.id)
         const seen = new Set((existing ?? []).map(r => r.sku_key))
         const missing = rows.filter(r => !seen.has(r.sku_key))

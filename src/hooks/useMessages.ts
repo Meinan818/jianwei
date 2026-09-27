@@ -1,9 +1,16 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { scopedStorage, avatarImages } from '@lark-apaas/client-toolkit-lite'
 import type { IMessage, IConversation } from '@/data/messages'
 import { MESSAGE_STORAGE_KEY } from '@/data/messages'
 import { useAuth } from './useAuth'
 import { getAllShops } from '@/data/shops'
+import { supabase } from '@/lib/supabase'
+import {
+  fetchVisibleMessages,
+  upsertConversation,
+  insertMessage,
+  canSyncConversation,
+} from '@/data/messages-remote'
 
 const MESSAGES_CHANGE_EVENT = 'food_delivery_messages_change'
 
@@ -338,6 +345,77 @@ export function useMessages() {
   const { user } = useAuth()
   const myRole = (user.role || 'customer') as UserRole
   const [state, setState] = useState<MessagesState>(() => readMessagesState())
+  // 已同步到数据库的消息 id / 会话快照（第 2 期 2c）
+  const syncedMsgIdsRef = useRef<Set<string>>(new Set())
+  const syncedConvRef = useRef<Map<string, string>>(new Map())
+
+  // ==========================================================================
+  // 第 2 期 2c：会话与消息与数据库双向镜像
+  //   读：登录后拉一遍（RLS 限定为会话参与方），数据库覆盖同名会话、
+  //       本地独有的保留（例如内置演示店的咨询会话无法入库）。
+  //   写：先确保会话行存在（消息外键指向它），再插入新消息，最后回写会话的未读/最后一条消息。
+  //   既有逻辑（会话 id 规则、三端未读分别计数）完全不动。
+  // ==========================================================================
+  useEffect(() => {
+    if (!supabase || !user.loggedIn) return
+    let cancelled = false
+    void (async () => {
+      const remote = await fetchVisibleMessages()
+      if (cancelled || !remote) return
+      remote.conversations.forEach(c => syncedConvRef.current.set(c.id, JSON.stringify(c)))
+      Object.values(remote.messages).flat().forEach(m => syncedMsgIdsRef.current.add(m.id))
+      setState(prev => {
+        const remoteIds = new Set(remote.conversations.map(c => c.id))
+        const localOnly = prev.conversations.filter(c => !remoteIds.has(c.id))
+        const conversations = [...localOnly, ...remote.conversations]
+        const messages: Record<string, IMessage[]> = { ...prev.messages }
+        for (const [cid, list] of Object.entries(remote.messages)) {
+          const seen = new Set(list.map(m => m.id))
+          const localKept = (prev.messages[cid] ?? []).filter(m => !seen.has(m.id))
+          messages[cid] = [...localKept, ...list].sort((a, b) => a.createdAt - b.createdAt)
+        }
+        const merged: MessagesState = { conversations, messages }
+        if (JSON.stringify(prev) === JSON.stringify(merged)) return prev
+        saveMessagesState(merged)
+        return merged
+      })
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [user.id, user.loggedIn])
+
+  // 回写数据库
+  useEffect(() => {
+    if (!supabase || !user.loggedIn) return
+    let cancelled = false
+    void (async () => {
+      // 1) 会话必须先在库里存在，否则消息的 conversation_id 外键会失败
+      const syncable = new Set<string>()
+      for (const c of state.conversations) {
+        if (!canSyncConversation(c)) continue
+        syncable.add(c.id)
+        const json = JSON.stringify(c)
+        if (syncedConvRef.current.get(c.id) === json) continue
+        const ok = await upsertConversation(c)
+        if (cancelled) return
+        if (ok) syncedConvRef.current.set(c.id, json)
+      }
+      // 2) 插入新消息（只增不改）
+      const pending = Object.values(state.messages)
+        .flat()
+        .filter(m => syncable.has(m.conversationId) && !syncedMsgIdsRef.current.has(m.id))
+        .sort((a, b) => a.createdAt - b.createdAt)
+      for (const m of pending) {
+        const ok = await insertMessage(m)
+        if (cancelled) return
+        if (ok) syncedMsgIdsRef.current.add(m.id)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [state, user.id, user.loggedIn])
 
   // 同窗口 CustomEvent 同步
   useEffect(() => {
@@ -419,8 +497,17 @@ export function useMessages() {
     content: string,
     senderInfo: { id: string; name: string; avatar: string; role: UserRole },
   ): IMessage => {
+    // 消息 id 用 uuid：数据库 messages.id 是 uuid，原来的 MSG-xxx 形态写不进去（第 2 期 2c）
+    let msgId: string
+    try {
+      msgId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `MSG-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    } catch {
+      msgId = `MSG-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    }
     const msg: IMessage = {
-      id: `MSG-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      id: msgId,
       conversationId,
       senderId: senderInfo.id,
       senderName: senderInfo.name,
