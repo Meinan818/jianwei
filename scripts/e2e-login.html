@@ -1,0 +1,106 @@
+<!doctype html>
+<!--
+  登录流程端到端测试页（无头浏览器可用）
+
+  用途：真实走一遍「启动页 → 顾客端 → 密码登录 → 进入顾客端首页」，
+  验证 Supabase 接入后的登录链路（含协议勾选校验、路由跳转、会话写入）。
+  这是纯接口测试替代不了的——它能抓住 UI 接线层面的问题。
+
+  用法（必须在构建产物目录里跑，因为要同源访问应用）：
+    1) npm run build:standalone
+    2) 把本文件复制到 dist/client/_e2e.html
+    3) npx vite preview --port 4322 --strictPort
+    4) chrome --headless=new --virtual-time-budget=60000 --dump-dom http://localhost:4322/_e2e.html
+    5) 结果在页面顶部 <pre id="log"> 里
+
+  注意：localStorage 里会留下登录会话，测试用独立的 --user-data-dir 更干净。
+-->
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>E2E 登录测试</title></head>
+<body style="font:13px/1.5 monospace">
+<pre id="log">[start]</pre>
+<iframe id="app" src="/" style="width:420px;height:820px;border:1px solid #ccc"></iframe>
+<script>
+const out = document.getElementById('log')
+const log = (m) => { out.textContent += '\n' + m }
+const sleep = (ms) => new Promise(r => setTimeout(r, ms))
+const app = document.getElementById('app')
+const doc = () => app.contentDocument
+const win = () => app.contentWindow
+
+async function waitFor(fn, timeout = 15000, label = '') {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeout) {
+    try { const r = fn(); if (r) return r } catch (e) { /* not ready */ }
+    await sleep(200)
+  }
+  throw new Error('等待超时: ' + label)
+}
+const btn = (text, exact = true) =>
+  [...doc().querySelectorAll('button,a')].find(e =>
+    exact ? e.textContent.trim() === text : e.textContent.trim().includes(text))
+
+function setInput(el, value) {
+  const w = win()
+  const setter = Object.getOwnPropertyDescriptor(w.HTMLInputElement.prototype, 'value').set
+  setter.call(el, value)
+  el.dispatchEvent(new w.Event('input', { bubbles: true }))
+}
+
+;(async () => {
+  try {
+    await new Promise(r => app.addEventListener('load', r, { once: true }))
+    await waitFor(() => doc().body.innerText.includes('顾客端'), 15000, '启动页渲染')
+    log('① 启动页渲染正常')
+
+    btn('顾客端', false).click()
+    await waitFor(() => doc().querySelector('input[placeholder*="手机号"]'), 15000, '登录页')
+    log('② 已进入登录页: ' + win().location.hash)
+
+    const pwdTab = btn('密码', false)
+    if (pwdTab) { pwdTab.click(); await sleep(400); log('③ 已切到密码登录') }
+    else log('③ 未找到密码 tab（可能默认即是）')
+
+    setInput(doc().querySelector('input[placeholder*="手机号"]'), '13800000001')
+    const pwd = doc().querySelector('input[type="password"]')
+    if (!pwd) throw new Error('找不到密码输入框')
+    setInput(pwd, '123456')
+    log('④ 已填手机号 13800000001 / 密码 123456')
+
+    // 同意协议：页面上是个普通 button，文字以「我已阅读并同意」开头
+    const agreeBtn = btn('我已阅读并同意', false)
+    if (agreeBtn) { agreeBtn.click(); await sleep(300); log('⑤ 已勾选同意协议') }
+    else log('⑤ 未找到同意协议按钮')
+
+    const loginBtn = btn('登录')
+    if (!loginBtn) throw new Error('找不到"登录"按钮')
+    loginBtn.click()
+    log('⑥ 已点击登录，等待跳转…')
+
+    const t0 = Date.now()
+    let ok = false, toast = ''
+    while (Date.now() - t0 < 25000) {
+      if (win().location.hash.includes('/customer')) { ok = true; break }
+      const t = doc().querySelector('[data-sonner-toast]')
+      if (t) toast = t.innerText.trim().replace(/\n+/g, ' ')
+      await sleep(300)
+    }
+    if (ok) {
+      log('✅ 登录成功！当前路由: ' + win().location.hash)
+      log('   Supabase 会话已写入 localStorage: ' +
+        !!win().localStorage.getItem('food_delivery_supabase_auth'))
+      log('   页面首段文字: ' + doc().body.innerText.slice(0, 120).replace(/\n+/g, ' | '))
+    } else {
+      log('❌ 未能进入顾客端；提示=' + (toast || '（无 toast）'))
+      log('   当前路由: ' + win().location.hash)
+      log('   页面文字: ' + doc().body.innerText.slice(0, 300).replace(/\n+/g, ' | '))
+    }
+  } catch (e) {
+    log('❌ 测试异常: ' + e.message)
+    try { log('   页面文字: ' + doc().body.innerText.slice(0, 300).replace(/\n+/g, ' | ')) } catch {}
+  }
+  log('[done]')
+})()
+</script>
+</body>
+</html>
