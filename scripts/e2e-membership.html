@@ -69,8 +69,14 @@ async function go(path, label) {
 }
 async function reloadAt(path) {
   const loaded = new Promise(r => app.addEventListener('load', r, { once: true }))
-  app.src = '/#' + path
-  await loaded
+  const url = new URL(app.src)
+  url.searchParams.set('e2eReload', String(Date.now()))
+  url.hash = path
+  app.src = url.toString()
+  await Promise.race([
+    loaded,
+    sleep(10000).then(() => { throw new Error('重新加载超时：' + path) }),
+  ])
   hook()
   await wait(() => text().includes('会员中心'), '会员中心恢复')
   await sleep(700)

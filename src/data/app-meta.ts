@@ -10,8 +10,8 @@
 /** 对用户展示的品牌名（项目/仓库代号仍是「简味点单 / jianwei」） */
 export const APP_BRAND = '饭否外卖'
 
-/** 原型迭代版次：每完成一次迭代 +1（当前对应「钱包断网恢复与重复记账修复」） */
-export const APP_EDITION = 15
+/** 原型迭代版次：每完成一次迭代 +1（当前对应「会员开通真实数据库接入」） */
+export const APP_EDITION = 16
 
 /** 三端设置页展示的版本号 */
 export const APP_VERSION = `v${APP_EDITION}.0.0`
