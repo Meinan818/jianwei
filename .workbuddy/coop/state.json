@@ -11,9 +11,9 @@
   "_nextAI说明": "下一个该接手的 AI。AI 汇报末尾的「—— 下一步 ——」区块必须和这里一致。",
   "nextAI": "none",
   "nextAIReason": "第十六版迭代完整结束，暂无待办任务",
-  "localMain": "30ce875",
-  "aheadOfOriginMain": 1,
+  "localMain": "89d092a",
+  "aheadOfOriginMain": 0,
   "onlineVersion": "第十六版",
   "pendingUserDecision": "",
-  "updatedAt": "2026-09-29T17:45:00+08:00"
+  "updatedAt": "2026-09-29T17:46:00+08:00"
 }
