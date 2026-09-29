@@ -100,3 +100,13 @@ AI 干完活
 - 当前状态：本地和远端 `main` 都是 `30ce875`；线上已是第十六版；用户已完成本地人工验收。协同文件随后完成本地存档，记录发布结果。
 - 已知风险或坑：线上核验使用实际脚本内容标记，没有比对 bundle 文件名；日志和测试记录保留在 `logs/`，不要擅自删除。
 - 接手方第一步：独立复核会员开通链路，重点看 `src/data/wallet-remote.ts` 的 `purchaseMembershipRemote`、`src/hooks/useWallet.ts` 的 `purchaseMembership`、迁移 `supabase/migrations/20260929020000_membership_purchase.sql` 和回归脚本 `scripts/e2e-membership.html`。
+
+---
+
+### [2026-09-29 17:45] Claude → 收尾完成
+- 分支：`main`
+- 本次做了什么：完成第十六版会员开通功能独立复核。审查了数据库迁移脚本 `supabase/migrations/20260929020000_membership_purchase.sql`（事务函数 `purchase_membership`）、前端调用层 `src/data/wallet-remote.ts` 的 `purchaseMembershipRemote` 与 `src/hooks/useWallet.ts` 的 `purchaseMembership`、回归测试 `scripts/e2e-membership.html`，以及线上部署核验。
+- 当前状态：本地 `main` 领先 `origin/main` 1 个提交（`d9faad0`，协同机制文档固化）；`.workbuddy/coop/` 下 2 个文件有未提交改动（本条记录与 `state.json` 更新）；线上已是第十六版。
+- 复核结论：✅ 可以发布。付款幂等性（`unique(user_id, attempt_id)` 约束 + RPC 内检查）、余额原子事务（`purchase_membership` 函数内锁定账户、扣款、写流水、写会员资格一次提交）、状态一致性（前端以数据库响应为准、响应丢失保留操作编号供重试）三项核心目标均已实现。测试脚本覆盖 9 个边界场景（取消、错误密码、断网、响应丢失、双击、刷新、清缓存恢复），真实浏览器 + 真实数据库验证通过。
+- 已知风险或坑：发现 2 个体验优化点（P2/P3 级别，不阻塞发布）：① 已有会员时提示"无需重复开通"容易误解为"付款未成功"，建议改为"您已是会员，有效期至 xx，到期后可续费"；② `membershipInFlight` 在异步请求完成后立即解锁、状态更新渲染前有理论竞态窗口，但数据库幂等约束已兜底（实测双击只扣一次），不影响数据正确性。
+- 接手方第一步：无需接手。第十六版开发、验证、发布、复核全部完成，协同文件随本次提交一并存档。后续迭代按正常流程：新需求 → Claude 定方案 → Codex 执行 → Claude 复核。

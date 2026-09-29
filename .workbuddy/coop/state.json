@@ -1,19 +1,19 @@
 {
   "_说明": "多 AI 协同的轮值锁。改代码前先读这里，holder 不是你就不要动代码。换班时由交出方改写本文件。",
   "_用法": "holder 取值：claude | codex | none。none 表示无人接管，任一 AI 都可认领。",
-  "holder": "claude",
-  "since": "2026-09-29T16:35:13+08:00",
+  "holder": "none",
+  "since": "2026-09-29T17:45:00+08:00",
   "branch": "main",
-  "task": "第十六版已 Push 并完成线上内容标记核验；发布收尾完成，等待 Claude 独立复核",
+  "task": "第十六版开发、发布、独立复核全部完成；协同文件已存档",
   "blocked": false,
   "blockedReason": "",
-  "nextCheckpoint": "Claude 对第十六版会员开通做发布后独立复核，重点检查付款幂等、余额与线上内容标记",
+  "nextCheckpoint": "无待办任务。后续新需求按正常流程：Claude 定方案 → Codex 执行 → Claude 复核",
   "_nextAI说明": "下一个该接手的 AI。AI 汇报末尾的「—— 下一步 ——」区块必须和这里一致。",
-  "nextAI": "claude",
-  "nextAIReason": "开发和发布均由 Codex 完成，需要未参与开发的 Claude 做独立复核",
+  "nextAI": "none",
+  "nextAIReason": "第十六版迭代完整结束，暂无待办任务",
   "localMain": "30ce875",
-  "aheadOfOriginMain": 0,
+  "aheadOfOriginMain": 1,
   "onlineVersion": "第十六版",
   "pendingUserDecision": "",
-  "updatedAt": "2026-09-29T16:35:13+08:00"
+  "updatedAt": "2026-09-29T17:45:00+08:00"
 }
