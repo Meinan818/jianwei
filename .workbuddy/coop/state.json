@@ -1,15 +1,19 @@
 {
   "_说明": "多 AI 协同的轮值锁。改代码前先读这里，holder 不是你就不要动代码。换班时由交出方改写本文件。",
   "_用法": "holder 取值：claude | codex | none。none 表示无人接管，任一 AI 都可认领。",
-  "holder": "codex",
-  "since": "2026-09-29T14:47:00+08:00",
-  "branch": "codex/membership-pending-sql",
-  "task": "会员功能（第十六版）收尾：5 个未提交文件待存档，会员分支待合回 main 并推送",
+  "holder": "claude",
+  "since": "2026-09-29T16:35:13+08:00",
+  "branch": "main",
+  "task": "第十六版已 Push 并完成线上内容标记核验；发布收尾完成，等待 Claude 独立复核",
   "blocked": false,
   "blockedReason": "",
-  "nextCheckpoint": "会员分支收尾完成后，把 holder 交给 claude 做独立复核",
+  "nextCheckpoint": "Claude 对第十六版会员开通做发布后独立复核，重点检查付款幂等、余额与线上内容标记",
   "_nextAI说明": "下一个该接手的 AI。AI 汇报末尾的「—— 下一步 ——」区块必须和这里一致。",
-  "nextAI": "codex",
-  "nextAIReason": "会员功能是 Codex 开发的，它掌握这段历史；Claude 接手会瞎猜。收尾完成后再交 Claude 复核。",
-  "updatedAt": "2026-09-29T16:06:00+08:00"
+  "nextAI": "claude",
+  "nextAIReason": "开发和发布均由 Codex 完成，需要未参与开发的 Claude 做独立复核",
+  "localMain": "30ce875",
+  "aheadOfOriginMain": 0,
+  "onlineVersion": "第十六版",
+  "pendingUserDecision": "",
+  "updatedAt": "2026-09-29T16:35:13+08:00"
 }
