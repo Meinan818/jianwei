@@ -22,6 +22,7 @@
 import { supabase } from '@/lib/supabase'
 import type { IMemberInfo, IWalletRecord, IWithdrawRecord } from './member'
 import { MEMBER_LEVELS } from './member'
+import { hasActiveMembership, type MembershipPaymentMethod } from './membership'
 
 const isUuid = (v: string) => /^[0-9a-f-]{36}$/i.test(v)
 const ts = (v: unknown): number | undefined => (v ? Date.parse(String(v)) : undefined)
@@ -83,7 +84,11 @@ function profileToMemberInfo(row: Record<string, any>): IMemberInfo {
     isVip: Boolean(row.is_vip),
   }
   const vipExpire = ts(row.vip_expire_at)
-  if (vipExpire) info.vipExpireDate = new Date(vipExpire).toISOString().slice(0, 10)
+  if (vipExpire) {
+    info.vipExpiresAt = new Date(vipExpire).toISOString()
+    info.vipExpireDate = info.vipExpiresAt.slice(0, 10)
+  }
+  info.isVip = hasActiveMembership(info)
   return info
 }
 
@@ -91,6 +96,29 @@ export interface WalletSnapshot {
   memberInfo: IMemberInfo
   records: IWalletRecord[]
   withdraws: IWithdrawRecord[]
+}
+
+export type MembershipPurchaseResult =
+  | { success: true; memberInfo: IMemberInfo; walletRecord?: IWalletRecord }
+  | { success: false; msg: string }
+
+/** 无响应时保留操作编号供重试，不能退回本地免费开通。 */
+export async function purchaseMembershipRemote(method: MembershipPaymentMethod, attemptId: string): Promise<MembershipPurchaseResult> {
+  const uncertain = { success: false as const, msg: '会员开通未确认，请检查网络后重试' }
+  if (!supabase) return uncertain
+  try {
+    const { data, error } = await supabase.rpc('purchase_membership', { p_method: method, p_attempt_id: attemptId })
+    if (error || !data?.profile || !data?.purchase) {
+      const known = ['钱包余额不足', '会员仍在有效期内，无需重复开通', '请使用原支付方式重试', '仅顾客可开通会员']
+      return error && known.includes(error.message) ? { success: false, msg: error.message } : uncertain
+    }
+    const memberInfo = profileToMemberInfo(data.profile)
+    if (!memberInfo.isVip) return { success: false, msg: '该笔付款已完成，会员已到期，请重新开通' }
+    return { success: true, memberInfo,
+      ...(data.wallet_record?.id ? { walletRecord: rowToWalletRecord(data.wallet_record) } : {}) }
+  } catch {
+    return uncertain
+  }
 }
 
 /** 登录后拉取：profiles + 本人钱包流水 + 本人提现记录；任一主数据失败返回 null 走本地 */

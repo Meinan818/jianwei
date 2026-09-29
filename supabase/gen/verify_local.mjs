@@ -491,6 +491,73 @@ if (initOk) {
     throw new Error('余额不足时钱包事务没有完整回滚');
   }
   console.log('✅ 充值重复请求只入账一次；余额支付一致成功，余额不足完整回滚');
+
+  console.log('\n── 11. 会员付款、资格与流水事务 ──');
+  const memberAttempt = 'c0000000-0000-4000-8000-000000000001';
+  const purchase = async (method, attempt) => (await db.query(
+    'select public.purchase_membership($1, $2) as result', [method, attempt],
+  )).rows[0].result;
+  const expectRejected = async (fn, expected) => {
+    let failure;
+    try { await fn(); } catch (error) { failure = error; }
+    if (!failure || !failure.message.includes(expected)) throw new Error('未按预期拒绝：' + expected);
+  };
+  let receipt = await purchase('balance', memberAttempt);
+  if (Number(receipt.profile.balance) !== 10 || !receipt.profile.is_vip
+      || Number(receipt.wallet_record.amount) !== -15) throw new Error('会员余额付款不一致');
+  const firstExpiry = receipt.profile.vip_expire_at;
+  if (Date.parse(receipt.purchase.expires_at) - Date.parse(receipt.purchase.starts_at) !== 30 * 86400000) {
+    throw new Error('会员有效期不是30天');
+  }
+  receipt = await purchase('balance', memberAttempt);
+  if (Number(receipt.profile.balance) !== 10 || receipt.profile.vip_expire_at !== firstExpiry) {
+    throw new Error('重试重复扣款或延长会员');
+  }
+  await expectRejected(() => purchase('wechat', memberAttempt), '请使用原支付方式重试');
+  await expectRejected(() => purchase('balance', 'c0000000-0000-4000-8000-000000000002'), '无需重复开通');
+  await expectRejected(() => purchase('cod', memberAttempt), '不支持');
+  await db.query("update public.profiles set vip_expire_at = now() - interval '1 day' where id = $1", [customer]);
+  await expectRejected(() => purchase('balance', 'c0000000-0000-4000-8000-000000000003'), '余额不足');
+  for (const [method, attempt] of [
+    ['wechat', 'c0000000-0000-4000-8000-000000000004'],
+    ['alipay', 'c0000000-0000-4000-8000-000000000005'],
+  ]) {
+    await db.query("update public.profiles set vip_expire_at = now() - interval '1 day' where id = $1", [customer]);
+    receipt = await purchase(method, attempt);
+    if (Number(receipt.profile.balance) !== 10 || !receipt.profile.is_vip || receipt.wallet_record?.id) {
+      throw new Error('外部模拟支付错误扣钱包或未开通');
+    }
+  }
+  // 人为让资格记录插入失败，验证已插入的消费流水也会随事务回滚。
+  await db.query("update public.profiles set balance = 50, is_vip = false where id = $1", [customer]);
+  await db.exec(`create function fail_membership_test() returns trigger language plpgsql as $$
+    begin raise exception '会员事务回滚测试'; end $$;
+    create trigger fail_membership_test before insert on public.membership_purchases
+      for each row execute function fail_membership_test();`);
+  await expectRejected(() => purchase('balance', 'c0000000-0000-4000-8000-000000000006'), '会员事务回滚测试');
+  const rolledBack = (await db.query(`select balance,is_vip,
+    (select count(*) from public.wallet_transactions where idempotency_key = 'membership:c0000000-0000-4000-8000-000000000006') as txns
+    from public.profiles where id = $1`, [customer])).rows[0];
+  if (Number(rolledBack.balance) !== 50 || rolledBack.is_vip || Number(rolledBack.txns) !== 0) throw new Error('会员事务未完整回滚');
+  await db.exec('drop trigger fail_membership_test on public.membership_purchases; drop function fail_membership_test();');
+  await db.exec(`create or replace function auth.uid() returns uuid language sql stable as $fn$ select '${merchant}'::uuid $fn$;`);
+  await expectRejected(() => purchase('wechat', memberAttempt), '仅顾客');
+  await db.exec(`create or replace function auth.uid() returns uuid language sql stable as $fn$ select null::uuid $fn$;`);
+  await expectRejected(() => purchase('wechat', memberAttempt), '请先登录');
+  // 用实际 authenticated 角色验证收据读取隔离与禁止直接写入。
+  await db.exec(`grant usage on schema auth to authenticated;
+    create or replace function auth.uid() returns uuid language sql stable as $fn$ select '${customer}'::uuid $fn$;
+    set role authenticated;`);
+  const ownReceipts = (await db.query('select count(*) as count from public.membership_purchases')).rows[0].count;
+  if (Number(ownReceipts) !== 3) throw new Error('用户不能读取本人会员付款记录');
+  await expectRejected(() => db.query('delete from public.membership_purchases'), 'permission denied');
+  await db.exec(`reset role;
+    create or replace function auth.uid() returns uuid language sql stable as $fn$ select '${merchant}'::uuid $fn$;
+    set role authenticated;`);
+  const otherReceipts = (await db.query('select count(*) as count from public.membership_purchases')).rows[0].count;
+  if (Number(otherReceipts) !== 0) throw new Error('其他账号读到了会员付款记录');
+  await db.exec('reset role;');
+  console.log('✅ 会员余额付款、微信/支付宝模拟付款、重试、到期重开、余额不足、事务回滚和角色校验通过');
 }
 
 await db.close();

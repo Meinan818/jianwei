@@ -1,0 +1,203 @@
+<!doctype html>
+<!-- 独立顾客真实注册和模拟付款；记录保留，凭证不进入日志。 -->
+<html lang="zh-CN"><meta charset="utf-8"><title>会员开通回归</title>
+<pre id="log">[start]</pre>
+<iframe id="app" src="/" style="width:420px;height:820px"></iframe>
+<script>
+const app = document.getElementById('app')
+const log = s => { document.getElementById('log').textContent += '\n' + s }
+const sleep = ms => new Promise(r => setTimeout(r, ms))
+const win = () => app.contentWindow
+const doc = () => app.contentDocument
+const text = () => doc().body.innerText
+const button = s => [...doc().querySelectorAll('button')].find(e => e.textContent.includes(s))
+const assert = (v, s) => { if (!v) throw new Error(s) }
+const click = s => { const b = button(s); assert(b && !b.disabled, '没有可点按钮：' + s); b.click() }
+const member = () => store('food_delivery_member', {})
+let origin, headers, userId, fault, pass = false
+function store(suffix, fallback = []) {
+  const s = win().localStorage
+  const key = Object.keys(s).find(k => k.endsWith(suffix))
+  return key ? JSON.parse(s.getItem(key)) : fallback
+}
+function input(selector, value) {
+  const el = doc().querySelector(selector)
+  assert(el, '输入框缺失：' + selector)
+  Object.getOwnPropertyDescriptor(win().HTMLInputElement.prototype, 'value').set.call(el, value)
+  el.dispatchEvent(new (win().Event)('input', { bubbles: true }))
+}
+async function wait(fn, label, ms = 15000) {
+  const start = Date.now()
+  while (Date.now() - start < ms) {
+    if (await fn()) return
+    await sleep(150)
+  }
+  throw new Error('超时：' + label)
+}
+function hook() {
+  const real = win().fetch.bind(win())
+  win().fetch = async (url, init) => {
+    const address = typeof url === 'string' ? url : url.url
+    if (address.includes('/rest/v1/')) {
+      origin = new URL(address).origin
+      headers = new Headers(init?.headers || url?.headers)
+    }
+    if (fault && address.endsWith('/rpc/purchase_membership')) {
+      const mode = fault
+      fault = null
+      if (mode === 'lost') {
+        const response = await real(url, init)
+        assert(response.ok, '响应丢失前服务器未成功')
+      }
+      throw new TypeError('模拟网络异常')
+    }
+    return real(url, init)
+  }
+}
+async function api(table, query) {
+  assert(origin && headers, '未连接真实数据库')
+  const response = await fetch(`${origin}/rest/v1/${table}?${query}`, { headers })
+  assert(response.ok, table + ' 查询失败 HTTP ' + response.status)
+  return response.json()
+}
+const profile = async () => (await api('profiles', 'select=balance,is_vip,vip_expire_at&id=eq.' + userId))[0]
+const purchases = () => api('membership_purchases', 'select=id,payment_method,amount,expires_at&user_id=eq.' + userId)
+async function go(path, label) {
+  win().location.hash = '#' + path
+  await wait(() => text().includes(label), label)
+  await sleep(300)
+}
+async function reloadAt(path) {
+  const loaded = new Promise(r => app.addEventListener('load', r, { once: true }))
+  app.src = '/#' + path
+  await loaded
+  hook()
+  await wait(() => text().includes('会员中心'), '会员中心恢复')
+  await sleep(700)
+}
+;(async () => {
+  try {
+    await new Promise(r => app.addEventListener('load', r, { once: true }))
+    hook()
+    await wait(() => button('顾客端'), '启动页')
+    click('顾客端')
+    await wait(() => button('立即注册'), '注册入口')
+    click('立即注册')
+    await wait(() => doc().querySelector('input[placeholder*="昵称"]'), '注册表单')
+    const password = crypto.randomUUID().slice(0, 18)
+    const phone = '139' + String(Date.now()).slice(-8)
+    input('input[placeholder*="手机号"]', phone)
+    input('input[placeholder*="昵称"]', '会员回归-' + Date.now())
+    input('input[placeholder*="验证码"]', '123456')
+    input('input[placeholder*="设置密码"]', password)
+    input('input[placeholder="确认密码"]', password)
+    await sleep(200)
+    click('我已阅读并同意')
+    await sleep(200)
+    click('注册并登录')
+    await wait(() => win().location.hash === '#/customer', '登录', 30000)
+    userId = store('food_delivery_auth', {}).id
+    assert(userId, '缺少真实账号')
+    await go('/customer/member', '会员中心')
+    await wait(() => member().balance === 0 && headers, '新账号钱包')
+    click('立即开通会员')
+    await sleep(600)
+    assert(win().location.hash.includes('type=membership'), '点击开通直接成功，未进入收银台')
+    assert(!member().isVip && !(await profile()).is_vip, '付款前已经开通会员')
+    assert(button('余额支付').disabled, '零余额仍允许余额支付')
+    assert(!button('货到付款'), '会员不应支持货到付款')
+    const purchaseUrl = win().location.hash
+    log('① 开通先进入 ¥15 收银台；零余额不可余额支付，付款前非会员')
+    click('取消开通')
+    await wait(() => text().includes('会员中心'), '取消返回')
+    assert(!member().isVip && !(await profile()).is_vip, '取消开通改变会员状态')
+    if (new URLSearchParams(location.search).has('preflight')) {
+      log('PREFLIGHT_RESULT=PASS：收银台、价格、禁用余额、取消和付款前数据库状态正确')
+      log('SMOKE_RESULT=PASS')
+      log('[done]')
+      return
+    }
+    await go('/customer/member', '会员中心')
+    click('充值')
+    await wait(() => button('确认充值'), '充值弹层')
+    click('确认充值')
+    await wait(() => button('确认支付'), '充值收银台')
+    click('确认支付')
+    await wait(async () => Number((await profile()).balance) === 50, '充值入账')
+    await go(purchaseUrl.slice(1), '会员开通')
+    click('余额支付')
+    await sleep(200)
+    click('确认支付')
+    await wait(() => button('确认付款'), '支付密码')
+    input('input[type="password"]', '000000')
+    await sleep(200)
+    click('确认付款')
+    await wait(() => text().includes('支付密码错误'), '错误密码')
+    assert(Number((await profile()).balance) === 50 && !(await profile()).is_vip, '错误密码扣款或开通')
+    input('input[type="password"]', '123456')
+    await sleep(200)
+    fault = 'before'
+    click('确认付款')
+    await wait(() => fault === null && button('确认支付')?.disabled === false && text().includes('会员开通未确认'), '断网提示')
+    assert(Number((await profile()).balance) === 50 && !(await profile()).is_vip, '断网仍扣款或开通')
+    assert((await purchases()).length === 0, '断网产生会员付款记录')
+    log('② 取消、错误密码和请求失败均不开通、不扣款')
+    click('确认支付')
+    await wait(() => button('确认付款'), '重试密码')
+    input('input[type="password"]', '123456')
+    await sleep(200)
+    fault = 'lost'
+    click('确认付款')
+    await wait(() => fault === null && button('确认支付')?.disabled === false && text().includes('会员开通未确认'), '响应丢失提示')
+    const committed = await profile()
+    assert(committed.is_vip && Number(committed.balance) === 35, '服务器未原子扣款与开通')
+    click('确认支付')
+    await wait(() => button('确认付款'), '安全重试密码')
+    input('input[type="password"]', '123456')
+    await sleep(200)
+    const confirm = button('确认付款')
+    confirm.click(); confirm.click()
+    await wait(() => win().location.hash === '#/customer/member' && member().isVip, '成功返回')
+    assert(member().balance === 35 && Number((await profile()).balance) === 35, '重复扣款')
+    assert((await purchases()).length === 1, '重复会员记录')
+    const txns = await api('wallet_transactions', 'select=amount,title&user_id=eq.' + userId + '&type=eq.consume')
+    assert(txns.length === 1 && Number(txns[0].amount) === -15, '会员消费流水缺失或重复')
+    log('③ 响应丢失后同编号重试与双击仅扣 ¥15、开通一次、写一条消费流水')
+    await reloadAt('/customer/member')
+    await wait(() => member().isVip && member().balance === 35, '刷新恢复会员与余额')
+    assert((await profile()).vip_expire_at === committed.vip_expire_at, '重试延长有效期')
+    assert(text().includes('有效期至'), '未展示会员有效期')
+    log('④ 刷新后会员状态、有效期和余额保持，数据库与页面一致')
+    // 这是脚本创建的临时浏览器，仅清除它的客户端缓存，不删除数据库业务记录。
+    win().localStorage.clear()
+    const freshLoaded = new Promise(r => app.addEventListener('load', r, { once: true }))
+    app.src = '/'
+    await freshLoaded
+    hook()
+    await wait(() => button('顾客端'), '无缓存启动')
+    click('顾客端')
+    await wait(() => button('密码登录'), '密码登录入口')
+    click('密码登录')
+    await wait(() => doc().querySelector('input[type="password"]'), '密码登录表单')
+    input('input[placeholder*="手机号"]', phone)
+    input('input[type="password"]', password)
+    await sleep(200)
+    click('我已阅读并同意')
+    await sleep(200)
+    const login = [...doc().querySelectorAll('button')].find(b => b.textContent.trim() === '登录')
+    assert(login, '找不到登录按钮')
+    login.click()
+    await wait(() => win().location.hash === '#/customer', '无缓存重新登录', 30000)
+    await go('/customer/member', '会员中心')
+    await wait(() => member().isVip && member().balance === 35, '无缓存从数据库恢复会员')
+    assert(member().vipExpiresAt === new Date(committed.vip_expire_at).toISOString(), '无缓存有效期不一致')
+    log('⑤ 清空临时浏览器缓存并重新登录后，会员与余额仍从数据库恢复')
+    pass = true
+  } catch (e) {
+    log('失败：' + e.message)
+    try { log('页面：' + text().slice(0, 700)) } catch {}
+  }
+  log('SMOKE_RESULT=' + (pass ? 'PASS' : 'FAIL'))
+  log('[done]')
+})()
+</script></html>

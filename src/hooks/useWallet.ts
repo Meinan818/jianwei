@@ -5,11 +5,13 @@ import type { IMemberInfo, IWalletRecord, IWithdrawRecord } from '@/data/member'
 import { MOCK_MEMBER_INFO, MOCK_WALLET_RECORDS, MEMBER_LEVELS, MOCK_WITHDRAW_RECORDS } from '@/data/member'
 import { useAuth } from '@/hooks/useAuth'
 import { supabase } from '@/lib/supabase'
+import { hasActiveMembership, isMembershipPaymentMethod, MEMBERSHIP_DAYS, MEMBERSHIP_PRICE } from '@/data/membership'
 import {
   fetchWalletSnapshot,
   applyWalletTxn,
   applyWalletTxnOnce,
   payOrderWithBalanceRemote,
+  purchaseMembershipRemote,
   syncWalletStats,
   insertWithdrawRecord,
   completeWithdrawRecord,
@@ -27,7 +29,7 @@ interface WalletContextValue {
   currentLevelInfo: typeof MEMBER_LEVELS[number]
   nextLevelInfo: typeof MEMBER_LEVELS[number] | null
   levelProgress: number // 0~1
-  openVip: (months?: number) => void
+  purchaseMembership: (method: string, attemptId: string) => Promise<{ success: boolean; msg: string }>
   addPointsAndGrowth: (amount: number, orderId?: string) => void
 
   // 钱包
@@ -58,6 +60,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [hasPayPassword, setHasPayPassword] = useState(true)
   // 登录拉取期间有本地改动就跳过迟到的回包（与 useAddresses 同一套防护）
   const mutatedRef = useRef(false)
+  const membershipInFlight = useRef(false)
+  const accountRef = useRef(user?.id)
+  accountRef.current = user?.id
 
   // 初始化（原行为保留：未登录/未配库时读本地，没有则用 Mock 兜底）
   useEffect(() => {
@@ -99,6 +104,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   // 第 2 期 2g：登录后以数据库为准拉一遍（profiles + 流水 + 提现记录）
   useEffect(() => {
     if (!isLoggedIn || !user?.id) return
+    mutatedRef.current = false
+    if (supabase) {
+      setMemberInfo({ level: 1, points: 0, balance: 0, totalSpent: 0, isVip: false })
+      setWalletRecords([])
+      setWithdrawRecords([])
+    }
     let cancelled = false
     void (async () => {
       const snap = await fetchWalletSnapshot(user.id)
@@ -157,19 +168,67 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     ? Math.min(1, (memberInfo.points - currentLevelInfo.threshold) / (nextLevelInfo.threshold - currentLevelInfo.threshold))
     : 1
 
-  // 开通会员
-  const openVip = useCallback((months = 1) => {
-    mutatedRef.current = true
-    setMemberInfo(prev => {
-      const updated: IMemberInfo = {
-        ...prev,
-        isVip: true,
-        vipExpireDate: new Date(Date.now() + months * 30 * 86400000).toISOString().slice(0, 10),
-      }
-      scopedStorage.setItem(MEMBER_KEY, JSON.stringify(updated))
-      return updated
+  // 即使页面一直开着，到期后也停止显示 VIP 资格。
+  useEffect(() => {
+    if (!memberInfo.isVip) return
+    const expire = () => setMemberInfo(prev => {
+      if (!prev.isVip || hasActiveMembership(prev)) return prev
+      const next = { ...prev, isVip: false }
+      scopedStorage.setItem(MEMBER_KEY, JSON.stringify(next))
+      return next
     })
-  }, [])
+    let timer: ReturnType<typeof setTimeout>
+    const schedule = () => {
+      expire()
+      const remaining = Date.parse(memberInfo.vipExpiresAt || memberInfo.vipExpireDate || '') - Date.now()
+      if (remaining > 0) timer = setTimeout(schedule, Math.min(remaining, 86400000))
+    }
+    schedule()
+    window.addEventListener('focus', expire)
+    return () => { clearTimeout(timer); window.removeEventListener('focus', expire) }
+  }, [memberInfo])
+
+  const purchaseMembership = useCallback(async (method: string, attemptId: string) => {
+    if (!isMembershipPaymentMethod(method) || !attemptId) return { success: false, msg: '请选择有效支付方式' }
+    if (membershipInFlight.current) return { success: false, msg: '会员开通处理中，请稍候' }
+    if (!isLoggedIn || user.role !== 'customer') return { success: false, msg: '请先登录顾客账号' }
+    const accountId = user.id
+    membershipInFlight.current = true
+    try {
+      if (supabase) {
+        const result = await purchaseMembershipRemote(method, attemptId)
+        if (accountRef.current !== accountId) return { success: false, msg: '账号已切换，请重新确认' }
+        if (result.success === false) return result
+        mutatedRef.current = true
+        saveMember(result.memberInfo)
+        if (result.walletRecord) {
+          const record = result.walletRecord
+          setWalletRecords(prev => {
+            const next = [record, ...prev.filter(r => r.id !== record.id)]
+            scopedStorage.setItem(WALLET_KEY, JSON.stringify(next))
+            return next
+          })
+        }
+      } else {
+        // 未配置后端时仍可演示；旧操作编号重试不延长有效期或重复扣余额。
+        const key = `food_delivery_membership_attempts_${accountId}`
+        const attempts: string[] = JSON.parse(scopedStorage.getItem(key) || '[]')
+        if (!attempts.includes(attemptId)) {
+          if (hasActiveMembership(memberInfo)) return { success: false, msg: '会员仍在有效期内，无需重复开通' }
+          if (method === 'balance' && memberInfo.balance < MEMBERSHIP_PRICE) return { success: false, msg: '钱包余额不足' }
+          const expiry = new Date(Date.now() + MEMBERSHIP_DAYS * 86400000).toISOString()
+          const next = { ...memberInfo, isVip: true, vipExpiresAt: expiry, vipExpireDate: expiry.slice(0, 10),
+            balance: memberInfo.balance - (method === 'balance' ? MEMBERSHIP_PRICE : 0) }
+          mutatedRef.current = true
+          saveMember(next)
+          if (method === 'balance') saveRecords([{ id: crypto.randomUUID(), type: 'consume', amount: -MEMBERSHIP_PRICE,
+            balanceAfter: next.balance, title: '会员开通', desc: `VIP 会员 ${MEMBERSHIP_DAYS} 天`, createdAt: Date.now() }, ...walletRecords])
+          scopedStorage.setItem(key, JSON.stringify([...attempts, attemptId]))
+        }
+      }
+      return { success: true, msg: '会员开通成功' }
+    } finally { membershipInFlight.current = false }
+  }, [isLoggedIn, user.id, user.role, memberInfo, walletRecords, saveMember, saveRecords])
 
   // 增加积分与成长值（每消费 1 元 = 1 成长值，会员按倍率）
   const addPointsAndGrowth = useCallback((amount: number, _orderId?: string) => {
@@ -434,7 +493,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     currentLevelInfo,
     nextLevelInfo,
     levelProgress,
-    openVip,
+    purchaseMembership,
     addPointsAndGrowth,
     balance: memberInfo.balance,
     walletRecords,

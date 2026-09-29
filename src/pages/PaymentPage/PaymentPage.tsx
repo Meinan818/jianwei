@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { useOrders } from '@/hooks/useOrders'
 import { useWallet } from '@/hooks/useWallet'
 import { useCoupons } from '@/hooks/useCoupons'
+import { MEMBERSHIP_DAYS, MEMBERSHIP_PRICE } from '@/data/membership'
 import { toast } from 'sonner'
 import { useNavigateReplace, usePageBack } from '@/hooks/useNavigationStack'
 
@@ -22,19 +23,21 @@ const PAYMENT_METHODS = [
 export default function PaymentPage() {
   const navigateReplace = useNavigateReplace()
   const pageBack = usePageBack()
-  const [params] = useSearchParams()
+  const [params, setParams] = useSearchParams()
   const orderId = params.get('orderId') || ''
-  const payType = params.get('type') || 'order' // 'order' | 'recharge'
+  const payType = params.get('type') || 'order' // order / recharge / membership
   const rechargeAmountRaw = params.get('amount') || '0'
   const rechargeAmount = Number(rechargeAmountRaw) || 0
   const rechargeAttempt = params.get('attempt') || ''
   const { orders, payOrder, cancelPendingOrder, cleanupExpiredPending } = useOrders()
-  const { balance, payOrderWithBalance, addPointsAndGrowth, verifyPayPassword, recharge } = useWallet()
+  const { balance, payOrderWithBalance, addPointsAndGrowth, verifyPayPassword, recharge, purchaseMembership } = useWallet()
   const { getCoupon, markUsed } = useCoupons()
 
   const isRecharge = payType === 'recharge'
+  const isMembership = payType === 'membership'
+  const isOrderPayment = !isRecharge && !isMembership
   // 支付金额：订单模式取订单实付；充值模式取 amount 参数
-  const payAmount = isRecharge ? rechargeAmount : (orders.find(o => o.id === orderId)?.finalAmount || 0)
+  const payAmount = isMembership ? MEMBERSHIP_PRICE : isRecharge ? rechargeAmount : (orders.find(o => o.id === orderId)?.finalAmount || 0)
 
   const [method, setMethod] = useState('wechat')
   const [processing, setProcessing] = useState(false)
@@ -49,15 +52,23 @@ export default function PaymentPage() {
   const pwdRef = useRef<HTMLInputElement>(null)
   const [countdown, setCountdown] = useState(0)
 
+  useEffect(() => {
+    if (isMembership && !rechargeAttempt) {
+      const next = new URLSearchParams(params)
+      next.set('attempt', rechargeAttemptRef.current)
+      setParams(next, { replace: true })
+    }
+  }, [isMembership, rechargeAttempt, params, setParams])
+
   const order = useMemo(() => {
-    if (isRecharge) return null
+    if (!isOrderPayment) return null
     return orders.find(o => o.id === orderId) || null
-  }, [isRecharge, orders, orderId])
+  }, [isOrderPayment, orders, orderId])
 
   // 充值模式下的支付方式：禁用余额支付（不能用余额充余额）
   const availableMethods = isRecharge
     ? PAYMENT_METHODS.filter(m => m.id !== 'balance' && m.id !== 'cod')
-    : PAYMENT_METHODS
+    : isMembership ? PAYMENT_METHODS.filter(m => m.id !== 'cod') : PAYMENT_METHODS
 
   // 倒计时
   useEffect(() => {
@@ -87,7 +98,7 @@ export default function PaymentPage() {
 
   const handlePay = async () => {
     if (processing) return
-    if (!isRecharge && !order) return
+    if (isOrderPayment && !order) return
     if (method === 'balance') {
       if (balance < payAmount) {
         toast.info('余额不足，请选择其他支付方式')
@@ -121,6 +132,13 @@ export default function PaymentPage() {
     try {
       // 模拟支付处理延时
       await new Promise(r => setTimeout(r, 1200))
+      if (isMembership) {
+        const result = await purchaseMembership(method, rechargeAttempt || rechargeAttemptRef.current)
+        if (!result.success) { toast.error(result.msg); return }
+        navigateReplace('/customer/member')
+        toast.success(result.msg)
+        return
+      }
       let balanceConfirmed = false
       if (method === 'balance') {
         if (!order) return
@@ -178,6 +196,8 @@ export default function PaymentPage() {
           /* ignore */
         }
       }, 0)
+    } catch {
+      toast.error(isMembership ? '会员开通未确认，请检查网络后重试' : '付款未确认，请稍后重试')
     } finally {
       paymentInFlight.current = false
       setProcessing(false)
@@ -195,6 +215,7 @@ export default function PaymentPage() {
   // 充值模式：amount>0 正常显示；amount<=0 → 返回会员中心
   // 订单模式：pending_payment → 正常；已支付→成功页；取消/不存在→订单列表
   useEffect(() => {
+    if (isMembership) return
     if (isRecharge) {
       if (rechargeAmount <= 0) {
         navigateReplace('/customer/member')
@@ -212,9 +233,9 @@ export default function PaymentPage() {
     } else {
       navigateReplace(`/payment/success?orderId=${order.id}`)
     }
-  }, [isRecharge, rechargeAmount, order, navigateReplace])
+  }, [isMembership, isRecharge, rechargeAmount, order, navigateReplace])
 
-  if (!isRecharge && !order) {
+  if (isOrderPayment && !order) {
     return (
       <div className="flex flex-col h-dvh bg-muted/30">
         <div className="flex items-center h-12 px-3 bg-card/95 backdrop-blur-xl border-b border-border/50">
@@ -232,9 +253,9 @@ export default function PaymentPage() {
   }
 
   // 充值模式：直接进入支付态；订单模式：pending_payment 才显示收银台
-  const isPayable = isRecharge
+  const isPayable = isMembership || (isRecharge
     ? rechargeAmount > 0
-    : !!order && order.status === 'pending_payment'
+    : !!order && order.status === 'pending_payment')
 
   const couponDiscount = order?.couponDiscount || 0
   const promoDiscount = order?.promoDiscount || 0
@@ -243,14 +264,14 @@ export default function PaymentPage() {
     <div className="flex flex-col h-dvh bg-muted/30">
       {/* Header */}
       <div className="flex items-center h-12 px-3 bg-card/95 backdrop-blur-xl border-b border-border/50 sticky top-0 z-10">
-        <Button variant="ghost" size="icon" className="size-8" onClick={pageBack}>
+        <Button variant="ghost" size="icon" className="size-8" disabled={processing} onClick={pageBack}>
           <ArrowLeft className="size-5" />
         </Button>
         <h1 className="flex-1 text-center text-sm font-medium">收银台</h1>
         <div className="w-8" />
       </div>
 
-      {!isPayable && !isRecharge ? (
+      {!isPayable && isOrderPayment ? (
         // 状态异常或跳转中：显示骨架 loading，由 useEffect 自动重定向，绝不出现「订单状态已变更」死页
         <div className="flex-1 flex flex-col items-center justify-center gap-3">
           <div className="size-8 rounded-full border-2 border-border border-t-foreground animate-spin" />
@@ -266,13 +287,14 @@ export default function PaymentPage() {
         >
           <p className="text-xs text-muted-foreground mb-2">支付金额（元）</p>
           <p className="text-4xl font-bold tabular-nums tracking-tight">¥{payAmount.toFixed(2)}</p>
-          {!isRecharge && countdown > 0 && (
+          {isMembership && <div className="mt-3 text-sm"><p>会员开通 · {MEMBERSHIP_DAYS} 天</p><p className="mt-1 text-xs text-muted-foreground">演示支付，不产生真实扣费，不自动续费</p></div>}
+          {isOrderPayment && countdown > 0 && (
             <p className="mt-2 text-xs text-muted-foreground flex items-center justify-center gap-1">
               <Clock className="size-3.5" />
               支付剩余 {formatTime(countdown)}，超时自动取消
             </p>
           )}
-          {!isRecharge && countdown === 0 && (
+          {isOrderPayment && countdown === 0 && (
             <p className="mt-2 text-xs text-destructive flex items-center justify-center gap-1">
               <AlertTriangle className="size-3.5" />
               支付已超时
@@ -281,7 +303,7 @@ export default function PaymentPage() {
         </motion.div>
 
         {/* 订单摘要（仅订单模式显示） */}
-        {!isRecharge && order && (
+        {isOrderPayment && order && (
           <div className="mx-3 mt-3 bg-card rounded-xl border border-border/50 px-4 py-3 text-sm space-y-2">
             <p className="text-xs text-muted-foreground">订单号 {order.id}</p>
           <div className="flex items-center justify-between">
@@ -320,7 +342,7 @@ export default function PaymentPage() {
               return (
                 <button
                   key={m.id}
-                  disabled={disabled}
+                  disabled={disabled || processing}
                   onClick={() => !disabled && setMethod(m.id)}
                   className={`w-full flex items-center gap-3 px-4 py-3.5 border-b border-border/30 last:border-0 text-left transition-colors ${
                     disabled ? 'opacity-50 cursor-not-allowed' : 'active:bg-muted/50'
@@ -349,10 +371,11 @@ export default function PaymentPage() {
         </div>
 
           {/* 取消支付 */}
-          {!isRecharge ? (
+          {isOrderPayment ? (
             <div className="mx-3 mt-4">
               <button
                 onClick={handleCancel}
+                disabled={processing}
                 className="w-full py-3 text-sm text-muted-foreground active:opacity-70"
               >
                 取消订单
@@ -361,10 +384,11 @@ export default function PaymentPage() {
           ) : (
             <div className="mx-3 mt-4">
               <button
-                onClick={pageBack}
+                onClick={() => isMembership ? navigateReplace('/customer/member') : pageBack()}
+                disabled={processing}
                 className="w-full py-3 text-sm text-muted-foreground active:opacity-70"
               >
-                取消充值
+                {isMembership ? '取消开通' : '取消充值'}
               </button>
             </div>
           )}
@@ -391,9 +415,9 @@ export default function PaymentPage() {
         <Button
           className="w-full h-12 rounded-full text-base font-medium"
           onClick={handlePay}
-          disabled={processing || (!isRecharge && countdown === 0) || !method}
+          disabled={processing || (isOrderPayment && countdown === 0) || !method}
         >
-          {!isRecharge && countdown === 0 ? '订单已超时' : `确认支付 ¥${payAmount.toFixed(2)}`}
+          {isOrderPayment && countdown === 0 ? '订单已超时' : `确认支付 ¥${payAmount.toFixed(2)}`}
         </Button>
       </div>
       {/* /isPayable 条件结束 — 底部按钮栏在骨架态也不显示，统一由 loading 层接管 */}

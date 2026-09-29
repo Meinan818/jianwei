@@ -11,9 +11,12 @@ import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const scenario = process.argv[2] || 'wallet-network'
+if (!['wallet-network', 'membership'].includes(scenario)) throw new Error('未知回归场景')
+const preflight = scenario === 'membership' && process.argv[3] === '--preflight'
 const dist = path.join(root, 'dist/client')
 const port = Number(process.env.SMOKE_PORT || 4333)
-const harness = path.join(dist, '_e2e-wallet-network.html')
+const harness = path.join(dist, `_e2e-${scenario}.html`)
 const profile = await fs.mkdtemp(path.join(os.tmpdir(), 'jw-wallet-network-'))
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 const stamp = new Date().toISOString().replace(/[:.]/g, '-')
@@ -53,9 +56,9 @@ try {
     if (await fs.stat(candidate).catch(() => null)) { executable = candidate; break }
   }
   if (!executable) throw new Error('找不到 Chrome / Edge')
-  await fs.copyFile(path.join(root, 'scripts/e2e-wallet-network.html'), harness)
+  await fs.copyFile(path.join(root, `scripts/e2e-${scenario}.html`), harness)
   server = spawn(process.execPath, [path.join(root, 'node_modules/vite/bin/vite.js'), 'preview', '--port', String(port), '--strictPort'], { cwd: root, stdio: 'ignore', windowsHide: true })
-  await waitFor(async () => (await fetch('http://localhost:' + port + '/_e2e-wallet-network.html')).ok)
+  await waitFor(async () => (await fetch(`http://localhost:${port}/_e2e-${scenario}.html`)).ok)
   browser = spawn(executable, ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--remote-debugging-port=0', '--user-data-dir=' + profile, 'about:blank'], { stdio: 'ignore', windowsHide: true })
   const debuggerPort = await waitFor(async () => Number((await fs.readFile(path.join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]))
   const pages = await (await fetch('http://localhost:' + debuggerPort + '/json/list')).json()
@@ -71,7 +74,7 @@ try {
     else task.resolve(message.result)
   })
   await cdp('Page.enable')
-  await cdp('Page.navigate', { url: 'http://localhost:' + port + '/_e2e-wallet-network.html' })
+  await cdp('Page.navigate', { url: `http://localhost:${port}/_e2e-${scenario}.html${preflight ? '?preflight=1' : ''}` })
   console.log('真实浏览器验证已启动：http://localhost:' + port)
   let output = '', printed = 0
   const start = Date.now()
@@ -85,11 +88,11 @@ try {
   passed = output.includes('SMOKE_RESULT=PASS')
   if (!output.includes('[done]')) output += '\nFAIL: 整体测试超时'
   await fs.mkdir(logDir, { recursive: true })
-  await fs.writeFile(path.join(logDir, 'e2e-wallet-network-' + stamp + '.log'), output)
+  await fs.writeFile(path.join(logDir, `e2e-${scenario}-${stamp}.log`), output)
   const bounds = await cdp('Runtime.evaluate', { expression: "JSON.stringify(document.getElementById('app').getBoundingClientRect().toJSON())", returnByValue: true })
   const box = JSON.parse(bounds.result.value)
   const screenshot = await cdp('Page.captureScreenshot', { captureBeyondViewport: true, clip: { x: box.x, y: box.y, width: box.width, height: box.height, scale: 1 } })
-  const screenshotPath = path.join(logDir, 'e2e-wallet-network-' + stamp + '.png')
+  const screenshotPath = path.join(logDir, `e2e-${scenario}-${stamp}.png`)
   await fs.writeFile(screenshotPath, Buffer.from(screenshot.data, 'base64'))
   console.log('截图：' + screenshotPath)
 } catch (error) {

@@ -14,6 +14,7 @@ export interface IMemberInfo {
   totalSpent: number // 累计消费（元）
   isVip: boolean // 是否开通会员
   vipExpireDate?: string
+  vipExpiresAt?: string // 精确有效期，供到期判定；日期字段只用于展示
 }
 
 export interface IWalletRecord {

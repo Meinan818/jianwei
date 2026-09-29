@@ -7,6 +7,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { useWallet } from '@/hooks/useWallet'
+import { MEMBERSHIP_DAYS, MEMBERSHIP_PRICE } from '@/data/membership'
 import { useCoupons } from '@/hooks/useCoupons'
 import { toast } from 'sonner'
 import { format } from 'date-fns'
@@ -20,7 +21,7 @@ export default function MemberCenterPage() {
   const navigatePush = useNavigatePush()
   const {
     memberInfo, currentLevelInfo, nextLevelInfo, levelProgress,
-    openVip, balance, walletRecords, recharge,
+    balance, walletRecords,
   } = useWallet()
   const { availableCoupons, usedCoupons, expiredCoupons, claimCoupon, unclaimedCoupons } = useCoupons()
   const [tab, setTab] = useState('available')
@@ -49,8 +50,7 @@ export default function MemberCenterPage() {
   }
 
   const handleOpenVip = () => {
-    openVip(1)
-    toast.success('已开通会员，享受更多权益')
+    navigateReplace(`/payment?type=membership&attempt=${crypto.randomUUID()}`)
   }
 
   const recordsRef = useRef<HTMLDivElement>(null)
@@ -91,6 +91,9 @@ export default function MemberCenterPage() {
               </span>
             </div>
 
+            {memberInfo.isVip && memberInfo.vipExpiresAt && (
+              <p className="relative mt-3 text-xs">有效期至 {format(new Date(memberInfo.vipExpiresAt), 'yyyy-MM-dd HH:mm')}</p>
+            )}
             {/* 进度条 */}
             <div className="relative mt-5">
               <div className="flex items-center justify-between text-xs opacity-80 mb-1.5">
@@ -113,9 +116,10 @@ export default function MemberCenterPage() {
                 className="mt-4 w-full h-10 rounded-full bg-white text-primary font-semibold text-sm flex items-center justify-center gap-1 active:scale-[0.98] transition-transform"
               >
                 <Star className="size-4" />
-                立即开通会员 · ¥15/月
+                立即开通会员 · ¥{MEMBERSHIP_PRICE}/月
               </button>
             )}
+            {!memberInfo.isVip && <p className="relative mt-2 text-xs opacity-80">每月按 {MEMBERSHIP_DAYS} 天计，演示支付，不会自动续费</p>}
           </div>
         </motion.div>
 
