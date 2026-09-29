@@ -327,6 +327,101 @@ if (initOk) {
   } catch (e) {
     console.log('断言查询失败：' + e.message);
   }
+
+  // ── 9. 商家配置：完整替换、失败回滚与自定义分类删除 ──────────────
+  console.log('\n── 9. 商家规格/加料与分类事务冒烟 ──');
+  const merchant = (await db.query(
+    "select id from public.profiles where role = 'merchant' limit 1"
+  )).rows[0]?.id;
+  if (!merchant) throw new Error('缺少演示商家');
+  await db.exec(`create or replace function auth.uid() returns uuid language sql stable
+    as $fn$ select '${merchant}'::uuid $fn$;`);
+  const dish = (await db.query(
+    'select d.id from public.dishes d join public.shops s on s.id = d.shop_id where s.owner_id = $1 limit 1',
+    [merchant],
+  )).rows[0]?.id;
+  if (!dish) throw new Error('缺少商家自有菜品');
+  const groups = [{
+    id: 'a0000000-0000-4000-8000-000000000001', name: '测试规格', sort: 0,
+    options: [{ id: 'a0000000-0000-4000-8000-000000000002', label: '标准', priceDelta: 0, sort: 0 }],
+  }];
+  const extras = [{ id: 'a0000000-0000-4000-8000-000000000003', name: '测试加料', price: 2, sort: 0 }];
+  await db.query('select public.replace_dish_options($1, $2::jsonb, $3::jsonb)', [
+    dish, JSON.stringify(groups), JSON.stringify(extras),
+  ]);
+  let counts = (await db.query(`
+    select (select count(*) from public.dish_spec_groups where dish_id = $1) as groups,
+           (select count(*) from public.dish_extras where dish_id = $1) as extras
+  `, [dish])).rows[0];
+  if (Number(counts.groups) !== 1 || Number(counts.extras) !== 1) {
+    throw new Error('规格和加料未一起保存');
+  }
+  try {
+    await db.query('select public.replace_dish_options($1, $2::jsonb, $3::jsonb)', [
+      dish, JSON.stringify(groups), JSON.stringify([{ ...extras[0], price: -1 }]),
+    ]);
+    throw new Error('非法加料价格意外保存成功');
+  } catch (err) {
+    if (err.message === '非法加料价格意外保存成功') throw err;
+  }
+  counts = (await db.query(`
+    select (select count(*) from public.dish_spec_groups where dish_id = $1) as groups,
+           (select count(*) from public.dish_extras where dish_id = $1) as extras
+  `, [dish])).rows[0];
+  if (Number(counts.groups) !== 1 || Number(counts.extras) !== 1) {
+    throw new Error('失败的规格保存没有回滚');
+  }
+  await db.query('select public.replace_dish_options($1, $2::jsonb, $3::jsonb)', [
+    dish, '[]', '[]',
+  ]);
+  counts = (await db.query(`
+    select (select count(*) from public.dish_spec_groups where dish_id = $1) as groups,
+           (select count(*) from public.dish_extras where dish_id = $1) as extras
+  `, [dish])).rows[0];
+  if (Number(counts.groups) !== 0 || Number(counts.extras) !== 0) {
+    throw new Error('空数组未清空规格和加料');
+  }
+  const ownedShop = (await db.query(
+    'select id from public.shops where owner_id = $1 limit 1', [merchant],
+  )).rows[0].id;
+  const category = (await db.query(
+    "insert into public.categories(shop_id, name, is_custom) values ($1, '测试分类', true) returning id",
+    [ownedShop],
+  )).rows[0].id;
+  await db.query(
+    "insert into public.dishes(shop_id, category_id, name, price) values ($1, $2, '测试菜品', 1)",
+    [ownedShop, category],
+  );
+  await db.query('select public.delete_custom_category($1)', [category]);
+  const left = (await db.query(
+    'select count(*) as count from public.dishes where category_id = $1', [category],
+  )).rows[0].count;
+  if (Number(left) !== 0) throw new Error('删除分类后仍有旧菜品');
+  const systemCategory = (await db.query(
+    'select id from public.categories where shop_id = $1 and is_custom = false limit 1',
+    [ownedShop],
+  )).rows[0]?.id;
+  if (!systemCategory) throw new Error('缺少系统分类');
+  try {
+    await db.query('select public.delete_custom_category($1)', [systemCategory]);
+    throw new Error('系统分类意外被删除');
+  } catch (err) {
+    if (err.message === '系统分类意外被删除') throw err;
+  }
+  const customer = (await db.query(
+    "select id from public.profiles where role = 'customer' limit 1"
+  )).rows[0]?.id;
+  await db.exec(`create or replace function auth.uid() returns uuid language sql stable
+    as $fn$ select '${customer}'::uuid $fn$;`);
+  try {
+    await db.query('select public.replace_dish_options($1, $2::jsonb, $3::jsonb)', [
+      dish, JSON.stringify(groups), JSON.stringify(extras),
+    ]);
+    throw new Error('非店主意外改动规格');
+  } catch (err) {
+    if (err.message === '非店主意外改动规格') throw err;
+  }
+  console.log('✅ 规格/加料保存、失败回滚、清空与分类级联删除通过');
 }
 
 await db.close();

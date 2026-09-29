@@ -13,6 +13,10 @@ import {
   setActivityActiveRemote,
   deleteActivityRemote,
   createDishRemote,
+  replaceDishOptionsRemote,
+  createCategoryRemote,
+  renameCategoryRemote,
+  deleteCategoryRemote,
   isUuid,
   remoteWritableDishKeys,
   type ActivityPayload,
@@ -51,6 +55,42 @@ function patchCachedDish(shopId: string, dishId: string, patch: DishConfigPatch)
     }
   })
   return ok && touched
+}
+
+function patchCachedDishOptions(
+  shopId: string,
+  dishId: string,
+  specs: IDishSpecOverride[],
+  extras: IDishExtraOverride[],
+): boolean {
+  let touched = false
+  patchRemoteShops(shops => {
+    for (let i = 0; i < shops.length; i++) {
+      if (shops[i].id !== shopId) continue
+      const categories = shops[i].categories.map(cat => ({
+        ...cat,
+        dishes: cat.dishes.map(dish => {
+          if (dish.id !== dishId) return dish
+          touched = true
+          return { ...dish, specs, extras }
+        }),
+      }))
+      if (touched) shops[i] = { ...shops[i], categories }
+    }
+  })
+  return touched
+}
+
+function patchCachedCategory(shopId: string, categoryId: string, name?: string): void {
+  patchRemoteShops(shops => {
+    const index = shops.findIndex(shop => shop.id === shopId)
+    if (index < 0) return
+    const shop = shops[index]
+    const categories = name === undefined
+      ? shop.categories.filter(cat => cat.id !== categoryId)
+      : shop.categories.map(cat => cat.id === categoryId ? { ...cat, name } : cat)
+    shops[index] = { ...shop, categories }
+  })
 }
 
 /** 把店铺基础信息同步进内存缓存（字段名与 IShop 一致） */
@@ -726,15 +766,22 @@ export function useShopStatus() {
     return dishId
   }, [removeLocalDish])
 
-  // 设置菜品规格组（覆盖原菜品规格）
-  const setDishSpecs = useCallback((shopId: string, dishId: string, specs: IDishSpecOverride[]) => {
-    updateDishStatus(shopId, dishId, { specs })
-  }, [updateDishStatus])
-
-  // 设置菜品加料（覆盖原菜品加料）
-  const setDishExtras = useCallback((shopId: string, dishId: string, extras: IDishExtraOverride[]) => {
-    updateDishStatus(shopId, dishId, { extras })
-  }, [updateDishStatus])
+  // 本机先显示完整的新配置；数据库将规格与加料作为一次原子操作保存。
+  const saveDishOptions = useCallback(async (
+    shopId: string,
+    dishId: string,
+    specs: IDishSpecOverride[],
+    extras: IDishExtraOverride[],
+  ): Promise<boolean> => {
+    updateDishStatus(shopId, dishId, { specs, extras })
+    const saved = await replaceDishOptionsRemote(dishId, specs, extras)
+    if (!saved) return false
+    if (patchCachedDishOptions(shopId, dishId, specs, extras)) {
+      releaseDishOverride(shopId, dishId, ['specs', 'extras'])
+    }
+    await reloadShops()
+    return true
+  }, [updateDishStatus, releaseDishOverride])
 
   // 获取合并后的菜品（基础数据 + 商家覆盖的规格/加料/价格等）
   const getMergedDish = useCallback((shopId: string, baseDish: IDish): IDish & { stock: number; soldOut: boolean; onShelf: boolean } => {
@@ -789,8 +836,9 @@ export function useShopStatus() {
   }, [shopStatus])
 
   // 新增自定义分类
-  const addCategory = useCallback((shopId: string, name: string) => {
-    const catId = `cat_${Date.now()}`
+  const addCategory = useCallback(async (shopId: string, name: string) => {
+    const remoteId = await createCategoryRemote(shopId, name.trim())
+    const catId = remoteId || `cat_${Date.now()}`
     setShopStatus(prev => {
       const existing = prev[shopId] || {
         isOpen: true,
@@ -818,11 +866,16 @@ export function useShopStatus() {
       scopedStorage.setItem(SHOP_STATUS_KEY, JSON.stringify(updated))
       return updated
     })
-    return catId
+    if (remoteId) await reloadShops()
+    return { id: catId, synced: Boolean(remoteId) }
   }, [])
 
   // 重命名分类
-  const renameCategory = useCallback((shopId: string, categoryId: string, name: string) => {
+  const renameCategory = useCallback(async (shopId: string, categoryId: string, name: string) => {
+    if (isUuid(categoryId)) {
+      const saved = await renameCategoryRemote(categoryId, name.trim())
+      if (!saved) return false
+    }
     setShopStatus(prev => {
       const existing = prev[shopId]
       if (!existing) return prev
@@ -838,10 +891,19 @@ export function useShopStatus() {
       scopedStorage.setItem(SHOP_STATUS_KEY, JSON.stringify(updated))
       return updated
     })
+    if (isUuid(categoryId)) {
+      patchCachedCategory(shopId, categoryId, name.trim())
+      await reloadShops()
+    }
+    return true
   }, [])
 
   // 删除分类
-  const deleteCategory = useCallback((shopId: string, categoryId: string) => {
+  const deleteCategory = useCallback(async (shopId: string, categoryId: string) => {
+    if (isUuid(categoryId)) {
+      const deleted = await deleteCategoryRemote(categoryId)
+      if (!deleted) return false
+    }
     setShopStatus(prev => {
       const existing = prev[shopId]
       if (!existing) return prev
@@ -860,6 +922,11 @@ export function useShopStatus() {
       scopedStorage.setItem(SHOP_STATUS_KEY, JSON.stringify(updated))
       return updated
     })
+    if (isUuid(categoryId)) {
+      patchCachedCategory(shopId, categoryId)
+      await reloadShops()
+    }
+    return true
   }, [])
 
   // 获取所有分类（原始 + 自定义）
@@ -867,8 +934,15 @@ export function useShopStatus() {
     const shop = getAllShops().find(s => s.id === shopId)
     if (!shop) return []
     const status = shopStatus[shopId]
-    const baseCats = shop.categories.map(c => ({ id: c.id, name: c.name, sort: 0, isCustom: false }))
+    const baseIds = new Set(shop.categories.map(c => c.id))
+    const baseCats = shop.categories.map(c => ({
+      id: c.id,
+      name: c.name,
+      sort: 0,
+      isCustom: Boolean(c.isCustom || status?.customCategories?.some(local => local.id === c.id)),
+    }))
     const customCats = (status?.customCategories || [])
+      .filter(c => !baseIds.has(c.id))
       .sort((a, b) => a.sort - b.sort)
       .map(c => ({ ...c, isCustom: true }))
     return [...baseCats, ...customCats]
@@ -1111,8 +1185,7 @@ export function useShopStatus() {
     setDishStock,
     setDishImage,
     setDishInfo,
-    setDishSpecs,
-    setDishExtras,
+    saveDishOptions,
     getMergedDish,
     addDish,
     addCategory,

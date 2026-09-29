@@ -22,6 +22,7 @@
  */
 import { supabase } from '@/lib/supabase'
 import type { IShopActivity } from './shop-status'
+import type { IDishSpecOverride, IDishExtraOverride } from './shop-status'
 
 /** 是否是数据库 uuid 主键（内置演示数据的 '1' / 'act_xx' 之类都不是） */
 export function isUuid(v: string | undefined | null): boolean {
@@ -265,5 +266,98 @@ export async function createDishRemote(input: {
   } catch (err) {
     console.warn('[shop-config] 新增菜品异常', err)
     return null
+  }
+}
+
+/** 原子替换规格和加料，空数组代表清空。 */
+export async function replaceDishOptionsRemote(
+  dishId: string,
+  specs: IDishSpecOverride[],
+  extras: IDishExtraOverride[],
+): Promise<boolean> {
+  const sb = supabase
+  if (!sb || !isUuid(dishId)) return false
+  const groups = specs.map((group, sort) => ({
+    id: isUuid(group.id) ? group.id : crypto.randomUUID(),
+    name: group.name,
+    sort,
+    options: group.options.map((option, optionSort) => ({
+      id: isUuid(option.id) ? option.id : crypto.randomUUID(),
+      label: option.label,
+      priceDelta: option.priceDelta ?? 0,
+      sort: optionSort,
+    })),
+  }))
+  const rows = extras.map((extra, sort) => ({
+    id: isUuid(extra.id) ? extra.id : crypto.randomUUID(),
+    name: extra.name,
+    price: extra.price,
+    sort,
+  }))
+  try {
+    const res = await sb.rpc('replace_dish_options', {
+      p_dish_id: dishId,
+      p_groups: groups,
+      p_extras: rows,
+    })
+    if (res.error) {
+      console.warn('[shop-config] 保存规格加料失败', res.error.message)
+      return false
+    }
+    return true
+  } catch (err) {
+    console.warn('[shop-config] 保存规格加料异常', err)
+    return false
+  }
+}
+
+export async function createCategoryRemote(shopId: string, name: string): Promise<string | null> {
+  const sb = supabase
+  if (!sb || !isUuid(shopId)) return null
+  try {
+    const res = await sb.from('categories')
+      .insert({ shop_id: shopId, name, is_custom: true, sort: 1000 + (Date.now() % 1_000_000) })
+      .select('id')
+    if (res.error || !res.data?.[0]?.id) {
+      console.warn('[shop-config] 新建分类失败', res.error?.message)
+      return null
+    }
+    return res.data[0].id as string
+  } catch (err) {
+    console.warn('[shop-config] 新建分类异常', err)
+    return null
+  }
+}
+
+export async function renameCategoryRemote(categoryId: string, name: string): Promise<boolean> {
+  const sb = supabase
+  if (!sb || !isUuid(categoryId)) return false
+  try {
+    const res = await sb.from('categories').update({ name })
+      .eq('id', categoryId).eq('is_custom', true).select('id')
+    if (res.error) {
+      console.warn('[shop-config] 重命名分类失败', res.error.message)
+      return false
+    }
+    return (res.data?.length ?? 0) > 0
+  } catch (err) {
+    console.warn('[shop-config] 重命名分类异常', err)
+    return false
+  }
+}
+
+export async function deleteCategoryRemote(categoryId: string): Promise<boolean> {
+  const sb = supabase
+  if (!sb || !isUuid(categoryId)) return false
+  try {
+    const res = await sb.rpc('delete_custom_category', { p_category_id: categoryId })
+    if (res.error) {
+      console.warn('[shop-config] 删除分类失败', res.error.message)
+      return false
+    }
+    return true
+  } catch (err) {
+    console.warn('[shop-config] 删除分类异常', err)
+    return false
   }
 }

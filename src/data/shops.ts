@@ -34,6 +34,7 @@ export interface IShopCategory {
   id: string
   name: string
   dishes: IDish[]
+  isCustom?: boolean
 }
 
 export interface IShopPromotion {

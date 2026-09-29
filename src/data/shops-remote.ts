@@ -154,7 +154,12 @@ async function loadShops(): Promise<void> {
   const catsByShop = new Map<string, IShopCategory[]>()
   for (const c of cats) {
     const list = catsByShop.get(c.shop_id) ?? []
-    list.push({ id: c.id, name: c.name, dishes: dishesByCategory.get(c.id) ?? [] })
+    list.push({
+      id: c.id,
+      name: c.name,
+      dishes: dishesByCategory.get(c.id) ?? [],
+      isCustom: Boolean(c.is_custom),
+    })
     catsByShop.set(c.shop_id, list)
   }
 

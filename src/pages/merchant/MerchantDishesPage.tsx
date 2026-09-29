@@ -69,7 +69,7 @@ export default function MerchantDishesPage() {
     shopStatus, toggleDishShelf, toggleDishSoldOut,
     setDishPrice, setDishStock, setDishImage, setDishInfo, addDish,
     addCategory, renameCategory, deleteCategory, getAllCategories,
-    setDishSpecs, setDishExtras,
+    saveDishOptions,
   } = useShopStatus()
 
   const shopId = user.shopId || '1'
@@ -105,6 +105,8 @@ export default function MerchantDishesPage() {
   const [newExtraPrice, setNewExtraPrice] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
   const addFileInputRef = useRef<HTMLInputElement>(null)
+  const categorySavingRef = useRef(false)
+  const optionsSavingRef = useRef(false)
 
   // 整合后的菜品列表（含自定义菜品）
   const getDishesForCategory = (categoryId: string): DishWithOverride[] => {
@@ -231,20 +233,42 @@ export default function MerchantDishesPage() {
     setExtras(prev => prev.filter(e => e.id !== id))
   }
 
-  const handleSaveSpecs = () => {
-    if (!specDishId) return
-    if (specGroups.length > 0) {
-      setDishSpecs(shopId, specDishId, specGroups.map(g => ({
-        id: g.id,
-        name: g.name,
-        options: g.options.map(o => ({ id: o.id, label: o.label, priceDelta: o.priceDelta })),
-      })))
+  const handleSaveSpecs = async () => {
+    if (!specDishId || optionsSavingRef.current) return
+    optionsSavingRef.current = true
+    try {
+      const synced = await saveDishOptions(
+        shopId,
+        specDishId,
+        specGroups.map(g => ({
+          id: g.id,
+          name: g.name,
+          options: g.options.map(o => ({ id: o.id, label: o.label, priceDelta: o.priceDelta })),
+        })),
+        extras.map(e => ({ id: e.id, name: e.name, price: e.price })),
+      )
+      if (synced) toast.success('规格与加料已同步')
+      else toast.info('规格与加料仅保存在本机')
+      setSpecDishId(null)
+    } finally {
+      optionsSavingRef.current = false
     }
-    if (extras.length > 0) {
-      setDishExtras(shopId, specDishId, extras.map(e => ({ id: e.id, name: e.name, price: e.price })))
+  }
+
+  const handleAddCategory = async () => {
+    const name = newCatName.trim()
+    if (!name) { toast.info('请输入分类名称'); return }
+    if (categorySavingRef.current) return
+    categorySavingRef.current = true
+    try {
+      const { id, synced } = await addCategory(shopId, name)
+      setActiveCategory(id)
+      setNewCatName('')
+      if (synced) toast.success('分类已同步')
+      else toast.info('分类仅保存在本机')
+    } finally {
+      categorySavingRef.current = false
     }
-    toast.success('规格与加料已保存')
-    setSpecDishId(null)
   }
 
   const handleSaveEdit = (dishId: string) => {
@@ -897,28 +921,10 @@ export default function MerchantDishesPage() {
                     onChange={e => setNewCatName(e.target.value)}
                     placeholder="输入新分类名称"
                     className="flex-1 h-10 px-3 bg-muted rounded-lg text-sm outline-none focus:ring-2 focus:ring-foreground/20"
-                    onKeyDown={e => {
-                      if (e.key === 'Enter') {
-                        if (newCatName.trim()) {
-                          const id = addCategory(shopId, newCatName.trim())
-                          setActiveCategory(id)
-                          setNewCatName('')
-                          toast.success('分类已添加')
-                        }
-                      }
-                    }}
+                    onKeyDown={e => { if (e.key === 'Enter') void handleAddCategory() }}
                   />
                   <button
-                    onClick={() => {
-                      if (!newCatName.trim()) {
-                        toast.info('请输入分类名称')
-                        return
-                      }
-                      const id = addCategory(shopId, newCatName.trim())
-                      setActiveCategory(id)
-                      setNewCatName('')
-                      toast.success('分类已添加')
-                    }}
+                    onClick={() => { void handleAddCategory() }}
                     className="px-4 h-10 rounded-lg bg-foreground text-background text-sm font-medium flex items-center gap-1"
                   >
                     <Plus className="size-4" />
@@ -948,9 +954,10 @@ export default function MerchantDishesPage() {
                           onChange={e => setEditingCatName(e.target.value)}
                           className="flex-1 h-8 px-2 bg-card rounded text-sm outline-none focus:ring-2 focus:ring-foreground/20"
                           autoFocus
-                          onKeyDown={e => {
+                          onKeyDown={async e => {
                             if (e.key === 'Enter') {
-                              renameCategory(shopId, cat.id, editingCatName)
+                              const saved = await renameCategory(shopId, cat.id, editingCatName)
+                              if (!saved) { toast.error('分类重命名失败'); return }
                               setEditingCatId(null)
                               setEditingCatName('')
                               toast.success('已重命名')
@@ -968,8 +975,9 @@ export default function MerchantDishesPage() {
                         <>
                           {editingCatId === cat.id ? (
                             <button
-                              onClick={() => {
-                                renameCategory(shopId, cat.id, editingCatName)
+                              onClick={async () => {
+                                const saved = await renameCategory(shopId, cat.id, editingCatName)
+                                if (!saved) { toast.error('分类重命名失败'); return }
                                 setEditingCatId(null)
                                 setEditingCatName('')
                                 toast.success('已重命名')
@@ -990,9 +998,10 @@ export default function MerchantDishesPage() {
                             </button>
                           )}
                           <button
-                            onClick={() => {
+                            onClick={async () => {
                               if (confirm(`确定删除分类「${cat.name}」吗？该分类下的菜品也会被删除。`)) {
-                                deleteCategory(shopId, cat.id)
+                                const deleted = await deleteCategory(shopId, cat.id)
+                                if (!deleted) { toast.error('分类删除失败'); return }
                                 if (activeCategory === cat.id) {
                                   const firstCat = getAllCategories(shopId).find(c => c.id !== cat.id)
                                   setActiveCategory(firstCat?.id || '')
