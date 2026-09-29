@@ -642,8 +642,10 @@ rejected         商家拒单（终态）
 
    发布**成功后**（不是发布前），必须回头更新这两处，否则交接文档会停留在"发布前"的状态：
 
-   - `.workbuddy/coop/state.json`：`onlineVersion` 改成新版次、`localMain` 改成实际提交号、
-     `aheadOfOriginMain` 改回 `0`、清空 `pendingUserDecision`。
+   - `.workbuddy/coop/state.json`：`onlineVersion` 改成新版次、清空 `pendingUserDecision`。
+     ⚠️ **不要在这里记 `localMain` / `aheadOfOriginMain` 这类"每次提交都会变"的 git 状态**——
+     抄下来那一刻就会过期（2026-09-29 实测：刚写完 `localMain: 89d092a`，下一条提交就变了，
+     字段立刻变成假话）。要看提交号现场跑 `git log --oneline -1` 即可，一秒的事。
    - `AGENTS.md` §1.1：线上版次、最近一次发布提交、待人工操作。
 
    ⚠️ **踩过的坑**：2026-09-29 第十六版发布时，§1.1 最后一次更新发生在**发布之前**
