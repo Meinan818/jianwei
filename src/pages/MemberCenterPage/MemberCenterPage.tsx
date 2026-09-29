@@ -40,8 +40,11 @@ export default function MemberCenterPage() {
 
   const handleRecharge = () => {
     if (rechargeAmount <= 0) return
-    // 充值走收银台：type=recharge + amount，支付成功后由收银台调用 recharge 到账
-    navigateReplace(`/payment?type=recharge&amount=${rechargeAmount}`)
+    // 操作编号随 URL 保留：响应丢失或刷新后仍用同一编号重试，避免重复入账。
+    const attemptId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `recharge-${Date.now()}`
+    navigateReplace(`/payment?type=recharge&amount=${rechargeAmount}&attempt=${attemptId}`)
     setShowRecharge(false)
   }
 

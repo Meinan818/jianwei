@@ -13,6 +13,7 @@
     "precommit": "npm run lint",
     "smoke": "npm run build:standalone && node scripts/e2e-smoke.mjs",
     "verify:coupon-wallet": "npm run build:standalone && node scripts/e2e-coupon-wallet.mjs",
+    "verify:wallet-network": "npm run build:standalone && node scripts/e2e-wallet-network.mjs",
     "prepare": "node scripts/setup-git-hooks.mjs"
   },
   "dependencies": {

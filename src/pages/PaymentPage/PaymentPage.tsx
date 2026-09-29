@@ -27,8 +27,9 @@ export default function PaymentPage() {
   const payType = params.get('type') || 'order' // 'order' | 'recharge'
   const rechargeAmountRaw = params.get('amount') || '0'
   const rechargeAmount = Number(rechargeAmountRaw) || 0
+  const rechargeAttempt = params.get('attempt') || ''
   const { orders, payOrder, cancelPendingOrder, cleanupExpiredPending } = useOrders()
-  const { balance, consumeBalance, addPointsAndGrowth, verifyPayPassword, recharge } = useWallet()
+  const { balance, payOrderWithBalance, addPointsAndGrowth, verifyPayPassword, recharge } = useWallet()
   const { getCoupon, markUsed } = useCoupons()
 
   const isRecharge = payType === 'recharge'
@@ -38,6 +39,11 @@ export default function PaymentPage() {
   const [method, setMethod] = useState('wechat')
   const [processing, setProcessing] = useState(false)
   const paymentInFlight = useRef(false)
+  const rechargeAttemptRef = useRef(
+    rechargeAttempt || (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `legacy-${rechargeAmount}-${Date.now()}`),
+  )
   const [showPayPwd, setShowPayPwd] = useState(false)
   const [payPwdValue, setPayPwdValue] = useState('')
   const pwdRef = useRef<HTMLInputElement>(null)
@@ -115,18 +121,21 @@ export default function PaymentPage() {
     try {
       // 模拟支付处理延时
       await new Promise(r => setTimeout(r, 1200))
+      let balanceConfirmed = false
       if (method === 'balance') {
-        const ok = consumeBalance(payAmount, isRecharge ? '余额充值扣款' : `订单支付 ${orderId.slice(-6)}`, orderId || undefined)
+        if (!order) return
+        const ok = await payOrderWithBalance(order.id, payAmount)
         if (!ok) {
-          toast.error('余额扣款失败')
+          toast.error('付款未确认，请检查网络后重试')
           return
         }
+        balanceConfirmed = true
       }
       if (isRecharge) {
         // 充值模式：支付成功后调用 recharge 到账
-        const ok = recharge(rechargeAmount, method)
+        const ok = await recharge(rechargeAmount, method, rechargeAttemptRef.current)
         if (!ok) {
-          toast.error('充值失败，请重试')
+          toast.error('充值未确认，请检查网络后重试')
           return
         }
         // 充值成功 → 跳回会员中心
@@ -141,7 +150,8 @@ export default function PaymentPage() {
         return
       }
       const paid = payOrder(order.id, method)
-      if (!paid) {
+      // 余额支付的订单已经由数据库事务推进；Realtime 比本地更早返回时，payOrder 可能得到 null。
+      if (!paid && !balanceConfirmed) {
         toast.error('支付失败，请重试')
         return
       }

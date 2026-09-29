@@ -422,6 +422,75 @@ if (initOk) {
     if (err.message === '非店主意外改动规格') throw err;
   }
   console.log('✅ 规格/加料保存、失败回滚、清空与分类级联删除通过');
+
+  // ── 10. 钱包：断网重试幂等 + 余额支付事务一致性 ──────────────
+  console.log('\n── 10. 钱包幂等与余额支付事务冒烟 ──');
+  await db.exec(`create or replace function auth.uid() returns uuid language sql stable
+    as $fn$ select '${customer}'::uuid $fn$;`);
+  await db.query(
+    "select public.apply_wallet_txn_once('recharge', 50, '余额充值', '微信支付', null, 'verify-recharge-1')",
+  );
+  await db.query(
+    "select public.apply_wallet_txn_once('recharge', 50, '余额充值', '微信支付', null, 'verify-recharge-1')",
+  );
+  let walletState = (await db.query(`
+    select p.balance,
+           (select count(*) from public.wallet_transactions
+             where user_id = p.id and idempotency_key = 'verify-recharge-1') as txns
+      from public.profiles p where p.id = $1
+  `, [customer])).rows[0];
+  if (Number(walletState.balance) !== 50 || Number(walletState.txns) !== 1) {
+    throw new Error('相同充值操作编号发生重复入账');
+  }
+
+  const walletShop = (await db.query('select id from public.shops limit 1')).rows[0].id;
+  const paidOrder = 'b0000000-0000-4000-8000-000000000001';
+  await db.query(`
+    insert into public.orders(
+      id, shop_id, customer_id, status, shop_name, total_amount, final_amount, address, pay_expire_at
+    ) values ($1, $2, $3, 'pending_payment', '钱包事务测试店', 25, 25, '{}'::jsonb, now() + interval '15 minutes')
+  `, [paidOrder, walletShop, customer]);
+  await db.query('select public.pay_order_with_balance($1, $2)', [paidOrder, 'verify-order-pay-1']);
+  await db.query('select public.pay_order_with_balance($1, $2)', [paidOrder, 'verify-order-pay-1']);
+  walletState = (await db.query(`
+    select p.balance,
+           o.status,
+           o.payment_method,
+           (select count(*) from public.wallet_transactions
+             where user_id = p.id and order_id = $2 and idempotency_key = 'verify-order-pay-1') as txns
+      from public.profiles p cross join public.orders o
+     where p.id = $1 and o.id = $2
+  `, [customer, paidOrder])).rows[0];
+  if (Number(walletState.balance) !== 25 || walletState.status !== 'pending'
+      || walletState.payment_method !== 'balance' || Number(walletState.txns) !== 1) {
+    throw new Error('余额支付没有保持余额、订单与流水一致');
+  }
+
+  const rejectedOrder = 'b0000000-0000-4000-8000-000000000002';
+  await db.query(`
+    insert into public.orders(
+      id, shop_id, customer_id, status, shop_name, total_amount, final_amount, address, pay_expire_at
+    ) values ($1, $2, $3, 'pending_payment', '钱包事务测试店', 30, 30, '{}'::jsonb, now() + interval '15 minutes')
+  `, [rejectedOrder, walletShop, customer]);
+  try {
+    await db.query('select public.pay_order_with_balance($1, $2)', [rejectedOrder, 'verify-order-pay-insufficient']);
+    throw new Error('余额不足的支付意外成功');
+  } catch (err) {
+    if (err.message === '余额不足的支付意外成功') throw err;
+  }
+  walletState = (await db.query(`
+    select p.balance,
+           o.status,
+           (select count(*) from public.wallet_transactions
+             where user_id = p.id and order_id = $2) as txns
+      from public.profiles p cross join public.orders o
+     where p.id = $1 and o.id = $2
+  `, [customer, rejectedOrder])).rows[0];
+  if (Number(walletState.balance) !== 25 || walletState.status !== 'pending_payment'
+      || Number(walletState.txns) !== 0) {
+    throw new Error('余额不足时钱包事务没有完整回滚');
+  }
+  console.log('✅ 充值重复请求只入账一次；余额支付一致成功，余额不足完整回滚');
 }
 
 await db.close();

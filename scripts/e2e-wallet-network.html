@@ -1,0 +1,291 @@
+<!doctype html>
+<!-- 钱包网络故障诊断：独立测试顾客，测试数据保留；数据库凭证不写日志。 -->
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>E2E 钱包网络故障</title></head>
+<body style="font:12px/1.5 monospace">
+<pre id="log">[start]</pre>
+<iframe id="app" src="/" style="width:420px;height:820px;border:1px solid #ccc"></iframe>
+<script>
+const out = document.getElementById('log')
+const log = m => { out.textContent += '\n' + m }
+const sleep = ms => new Promise(r => setTimeout(r, ms))
+const app = document.getElementById('app')
+const doc = () => app.contentDocument
+const win = () => app.contentWindow
+const SHOP_ID = '00000000-0000-4000-8000-000000000099'
+const PHONE = '139' + String(Date.now()).slice(-8)
+const PASSWORD = crypto.randomUUID().slice(0, 18)
+const RUN = '钱包网络验证-' + Date.now()
+const requests = []
+let restOrigin, restHeaders, userId, pass = false
+
+async function waitFor(fn, timeout = 25000, label = '') {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeout) {
+    try { const r = await fn(); if (r) return r } catch (e) { /* 等待页面/请求完成 */ }
+    await sleep(150)
+  }
+  throw new Error('等待超时: ' + label)
+}
+function assert(ok, message) { if (!ok) throw new Error(message) }
+const buttons = () => [...doc().querySelectorAll('button,a')]
+const btn = text => buttons().find(e => e.textContent.trim().includes(text))
+const exactBtn = text => buttons().find(e => e.textContent.trim() === text)
+const text = () => (doc().body.innerText || '').replace(/\n+/g, ' | ')
+function click(el, label) { assert(el && !el.disabled, '找不到可点击入口: ' + label); el.click() }
+function setInput(el, value) {
+  assert(el, '找不到输入框')
+  Object.getOwnPropertyDescriptor(win().HTMLInputElement.prototype, 'value').set.call(el, value)
+  el.dispatchEvent(new (win().Event)('input', { bubbles: true }))
+}
+function readStore(suffix, fallback = []) {
+  const s = win().localStorage
+  for (let i = 0; i < s.length; i++) {
+    const k = s.key(i)
+    if (k && k.endsWith(suffix)) return JSON.parse(s.getItem(k))
+  }
+  return fallback
+}
+function hookNetwork() {
+  const original = win().fetch.bind(win())
+  win().fetch = async (input, init) => {
+    const url = typeof input === 'string' ? input : input.url
+    if (!url.includes('/rest/v1/') && !url.includes('/auth/v1/')) return original(input, init)
+    const headers = new Headers(init?.headers || input?.headers)
+    if (url.includes('/rest/v1/') && headers.has('authorization')) { restOrigin = new URL(url).origin; restHeaders = headers }
+    const rec = { path: new URL(url).pathname, method: init?.method || input?.method || 'GET' }
+    requests.push(rec)
+    try {
+      const response = await original(input, init)
+      rec.status = response.status
+      rec.data = await response.clone().json().catch(() => null)
+      return response
+    } catch (e) { rec.failed = true; throw e }
+  }
+}
+async function api(table, query) {
+  assert(restOrigin && restHeaders, '没有捕获到真实数据库请求，禁止把 Mock 当验证成功')
+  const res = await fetch(restOrigin + '/rest/v1/' + table + '?' + query, { headers: restHeaders })
+  assert(res.ok, '数据库读取失败: ' + table + ' HTTP ' + res.status)
+  return res.json()
+}
+async function profile() { return (await api('profiles', 'select=balance,growth_points,total_spent&id=eq.' + userId))[0] }
+async function claims() { return api('user_coupons', 'select=coupon_id,status,used_at&user_id=eq.' + userId) }
+async function transactions() { return api('wallet_transactions', 'select=id,type,amount,balance_after,order_id&user_id=eq.' + userId) }
+async function remoteOrder(id) { return (await api('orders', 'select=id,status,final_amount,coupon_discount,payment_method&id=eq.' + id))[0] }
+function failNextWalletRpc(rpcName, mode, count = 1) {
+  const original = win().fetch
+  let seen = 0
+  win().fetch = async (input, init) => {
+    const url = typeof input === 'string' ? input : input.url
+    if (seen < count && url.includes('/rest/v1/rpc/' + rpcName)) {
+      seen++
+      if (seen === count) win().fetch = original
+      if (mode === 'lost-response') await original(input, init)
+      throw new TypeError('模拟网络断开')
+    }
+    return original(input, init)
+  }
+  return () => seen === count
+}
+async function go(path, label) {
+  win().location.hash = '#' + path
+  await waitFor(() => text().includes(label), 20000, label)
+  await sleep(500)
+}
+function couponButton(name, action) {
+  const p = [...doc().querySelectorAll('p,span')].find(e => e.textContent.trim() === name)
+  let ancestor = p
+  for (let i = 0; i < 7 && ancestor; i++, ancestor = ancestor.parentElement) {
+    const b = [...ancestor.querySelectorAll('button')].find(e => e.textContent.includes(action))
+    if (b) return b
+  }
+  return null
+}
+function dishCard(name) {
+  const el = [...doc().querySelectorAll('h3,p,span')].find(e => e.textContent.trim() === name)
+  let p = el
+  for (let i = 0; i < 7 && p; i++, p = p.parentElement) {
+    if ([...p.querySelectorAll('button')].some(b => b.innerHTML.includes('lucide-plus') || b.textContent.includes('选规格'))) return p
+  }
+  return null
+}
+async function checkout(coupon, suffix) {
+  await go('/customer/shop/' + SHOP_ID, '招牌牛肉饭')
+  const card = dishCard('招牌牛肉饭')
+  assert(card, '没找到真实菜单菜品')
+  const add = [...card.querySelectorAll('button')].find(b => b.innerHTML.includes('lucide-plus') || b.textContent.includes('选规格'))
+  click(add, '加菜')
+  await sleep(500)
+  if (btn('加入购物车')) click(btn('加入购物车'), '确认规格')
+  await waitFor(() => readStore('food_delivery_cart', {}).items?.length > 0, 8000, '购物车')
+  click(btn('去结算'), '去结算')
+  await waitFor(() => text().includes('确认订单'), 10000, '确认订单')
+  click(exactBtn('到店自取'), '到店自取')
+    await sleep(200)
+  setInput(doc().querySelector('input[placeholder*="口味"]'), RUN + '-' + suffix)
+  if (coupon) {
+    const couponRow = [...doc().querySelectorAll('span')].find(e => e.textContent.trim() === '优惠券')?.parentElement?.parentElement
+    click(couponRow, '选择优惠券')
+    await waitFor(() => text().includes('选择优惠券'), 5000, '优惠券弹层')
+    const tooHigh = buttons().find(b => b.textContent.includes('满 60 减 15'))
+    assert(tooHigh && tooHigh.textContent.includes('还差'), '未达门槛的券没有不可用提示')
+    tooHigh.click()
+    await sleep(200)
+    assert(text().includes('选择优惠券'), '未达门槛的券仍被选中')
+    click(buttons().find(b => b.textContent.includes(coupon.name)), '选择可用券')
+    await waitFor(() => !text().includes('选择优惠券'), 5000, '关闭优惠券弹层')
+  }
+  click(btn('提交订单'), '提交订单')
+  await waitFor(() => win().location.hash.includes('/payment?orderId='), 12000, '收银台')
+  const id = new URLSearchParams(win().location.hash.split('?')[1]).get('orderId')
+  await waitFor(async () => (await remoteOrder(id))?.status === 'pending_payment', 15000, '订单入库')
+  const order = readStore('food_delivery_orders').find(o => o.id === id)
+  assert(order && order.items.length === 1, '订单明细不正确')
+  if (coupon) {
+    assert(order.couponInfo?.couponId === coupon.id && order.couponDiscount === coupon.value, '优惠券未按预期抵扣')
+    assert(order.promoDiscount === 0, '店铺满减与红包不应重复抵扣')
+    assert(order.finalAmount === +(order.totalAmount + order.deliveryFee + (order.packingFee || 0) - order.discount).toFixed(2), '结算金额不一致')
+    assert((await claims()).find(c => c.coupon_id === coupon.id)?.status === 'claimed', '尚未支付却已核销')
+  }
+  return order
+}
+
+;(async () => {
+  try {
+    await new Promise(r => app.addEventListener('load', r, { once: true }))
+    hookNetwork()
+    await waitFor(() => btn('顾客端'), 20000, '启动页')
+    click(btn('顾客端'), '顾客端')
+    await waitFor(() => btn('立即注册'), 15000, '登录页')
+    click(btn('立即注册'), '注册入口')
+    await waitFor(() => doc().querySelector('input[placeholder*="昵称"]'), 5000, '注册表单')
+    setInput(doc().querySelector('input[placeholder*="手机号"]'), PHONE)
+    setInput(doc().querySelector('input[placeholder*="昵称"]'), RUN)
+    setInput(doc().querySelector('input[placeholder*="验证码"]'), '123456')
+    setInput(doc().querySelector('input[placeholder*="设置密码"]'), PASSWORD)
+    setInput(doc().querySelector('input[placeholder="确认密码"]'), PASSWORD)
+    await sleep(300)
+    click(btn('我已阅读并同意'), '协议')
+    await sleep(200)
+    click(exactBtn('注册并登录'), '注册')
+    await waitFor(() => win().location.hash === '#/customer', 30000, '注册登录')
+    userId = readStore('food_delivery_auth', {}).id
+    if (!userId) userId = (await api('profiles', 'select=id')).find(p => p.id)?.id
+    assert(userId && /^[0-9a-f-]{36}$/i.test(userId), '没有真实用户身份')
+    await waitFor(() => restHeaders, 10000, '数据库认证')
+    await go('/customer/member', '我的余额')
+    await waitFor(() => readStore('food_delivery_member', {}).balance === 0, 15000, '初始钱包')
+    assert(Number((await profile()).balance) === 0, '测试账号初始余额应为零')
+    log('① 独立顾客账号真实注册，数据库初始余额 ¥0.00')
+
+    const openRecharge = async () => {
+      await go('/customer/member', '我的余额')
+      click(exactBtn('充值'), '充值')
+      await waitFor(() => btn('确认充值'), 5000, '充值金额弹层')
+      click(btn('确认充值'), '充值 ¥50')
+      await waitFor(() => win().location.hash.includes('type=recharge') && btn('确认支付'), 7000, '充值收银台')
+    }
+    const confirmRecharge = async () => {
+      click(btn('确认支付'), '确认模拟充值')
+      await sleep(1600)
+    }
+    const finishRecharge = async () => {
+      await waitFor(() => win().location.hash === '#/customer/member', 10000, '充值返回会员中心')
+    }
+
+    await openRecharge()
+    const blockedRecharge = failNextWalletRpc('apply_wallet_txn_once', 'before-send')
+    await confirmRecharge()
+    assert(blockedRecharge(), '充值 RPC 未被断网模拟拦截')
+    assert(win().location.hash.includes('type=recharge'), '充值失败仍离开收银台')
+    assert(text().includes('充值未确认'), '充值失败没有明确提示')
+    assert(readStore('food_delivery_member').balance === 0, '充值失败仍修改页面余额')
+    assert(Number((await profile()).balance) === 0, '充值失败仍修改数据库余额')
+    assert((await transactions()).filter(t => t.type === 'recharge').length === 0, '充值失败仍产生流水')
+    log('② 充值请求失败：提示明确，页面/数据库余额均为 ¥0.00，流水 0 条')
+    await confirmRecharge()
+    await finishRecharge()
+    await waitFor(async () => Number((await profile()).balance) === 50, 15000, '充值重试入库')
+    assert(readStore('food_delivery_member').balance === 50, '充值重试后页面余额不正确')
+    assert((await transactions()).filter(t => t.type === 'recharge').length === 1, '充值重试没有且仅有一条流水')
+    log('③ 网络恢复后用同一操作编号重试：余额 ¥50.00，充值流水仅 1 条')
+
+    const walletOrder = await checkout(null, '断网余额支付')
+    click(btn('余额支付'), '余额支付')
+    await sleep(200)
+    click(btn('确认支付'), '余额支付确认')
+    await sleep(800)
+    const passwordInput = doc().querySelector('input[type="password"],input[inputmode="numeric"]')
+    assert(passwordInput, '未出现支付密码输入框')
+    setInput(passwordInput, '123456')
+    await sleep(200)
+    const blockedConsume = failNextWalletRpc('pay_order_with_balance', 'before-send', 2)
+    click(btn('确认付款'), '断网付款')
+    await sleep(1800)
+    assert(blockedConsume(), '消费 RPC 未被断网模拟拦截')
+    assert(!win().location.hash.includes('/payment/success'), '扣款失败仍进入支付成功页')
+    assert(text().includes('付款未确认'), '余额支付失败没有明确提示')
+    assert(readStore('food_delivery_member').balance === 50, '扣款失败仍修改页面余额')
+    assert(Number((await profile()).balance) === 50, '扣款失败仍修改数据库余额')
+    assert((await remoteOrder(walletOrder.id)).status === 'pending_payment', '扣款失败仍推进订单')
+    assert((await transactions()).filter(t => t.type === 'consume' && t.order_id === walletOrder.id).length === 0, '扣款失败仍产生消费流水')
+    log('④ 余额支付请求失败：留在收银台，余额、订单和流水全部不变')
+    click(btn('余额支付'), '余额支付重试')
+    await sleep(200)
+    click(btn('确认支付'), '余额支付重试确认')
+    await sleep(500)
+    const retryPassword = doc().querySelector('input[type="password"],input[inputmode="numeric"]')
+    setInput(retryPassword, '123456')
+    click(btn('确认付款'), '网络恢复后付款')
+    await waitFor(() => win().location.hash.includes('/payment/success'), 12000, '余额支付成功页')
+    const expectedBalance = +(50 - walletOrder.finalAmount).toFixed(2)
+    await waitFor(async () => Number((await profile()).balance) === expectedBalance && (await remoteOrder(walletOrder.id)).status === 'pending', 15000, '余额支付事务')
+    assert(readStore('food_delivery_member').balance === expectedBalance, '余额支付成功后页面余额不一致')
+    assert((await transactions()).filter(t => t.type === 'consume' && t.order_id === walletOrder.id).length === 1, '余额支付流水不是一条')
+    log('⑤ 网络恢复后余额支付成功：扣款、订单待接单和单条流水一致')
+
+    const lostPaymentOrder = await checkout(null, '余额付款响应丢失')
+    const balanceBeforePaymentLoss = Number((await profile()).balance)
+    click(btn('余额支付'), '响应丢失余额支付')
+    await sleep(200)
+    click(btn('确认支付'), '响应丢失余额支付确认')
+    await sleep(500)
+    const lostPaymentPassword = doc().querySelector('input[type="password"],input[inputmode="numeric"]')
+    setInput(lostPaymentPassword, '123456')
+    const lostPaymentResponse = failNextWalletRpc('pay_order_with_balance', 'lost-response')
+    click(btn('确认付款'), '响应丢失确认付款')
+    await waitFor(async () => (await remoteOrder(lostPaymentOrder.id)).status === 'pending', 12000, '响应丢失订单已支付')
+    assert(lostPaymentResponse(), '付款响应丢失模拟未生效')
+    await waitFor(() => win().location.hash.includes('/payment/success'), 12000, '响应丢失付款结果')
+    assert(Number((await profile()).balance) === balanceBeforePaymentLoss - lostPaymentOrder.finalAmount, '响应丢失后数据库未扣款')
+    assert(readStore('food_delivery_member').balance === balanceBeforePaymentLoss - lostPaymentOrder.finalAmount, '响应丢失后页面余额未恢复')
+    assert((await transactions()).filter(t => t.type === 'consume' && t.order_id === lostPaymentOrder.id).length === 1, '响应丢失后消费流水不是一条')
+    log('⑥ 余额支付服务端成功但响应丢失：页面、数据库、订单和单条流水一致')
+
+    await openRecharge()
+    const beforeLoss = (await transactions()).filter(t => t.type === 'recharge').length
+    const balanceBeforeLoss = Number((await profile()).balance)
+    const lostResponse = failNextWalletRpc('apply_wallet_txn_once', 'lost-response')
+    await confirmRecharge()
+    await waitFor(async () => Number((await profile()).balance) === balanceBeforeLoss + 50, 15000, '响应丢失但服务端入账')
+    assert(lostResponse(), '响应丢失模拟未生效')
+    assert(win().location.hash.includes('type=recharge'), '响应丢失时页面错误离开收银台')
+    await confirmRecharge()
+    await finishRecharge()
+    assert(Number((await profile()).balance) === balanceBeforeLoss + 50, '响应丢失后重试发生重复入账')
+    assert((await transactions()).filter(t => t.type === 'recharge').length - beforeLoss === 1, '响应丢失后重试产生重复流水')
+    assert(readStore('food_delivery_member').balance === balanceBeforeLoss + 50, '响应丢失恢复后页面余额不一致')
+    log('⑦ 充值服务端已处理但响应丢失：同编号重试不重复入账，页面恢复权威余额')
+    pass = true
+  } catch (e) {
+    log('❌ ' + e.message)
+    try { log('页面: ' + text().slice(0, 900)) } catch { /* 页面不可用 */ }
+    for (const r of requests.filter(r => r.status >= 400 || r.failed)) log('请求失败: ' + r.method + ' ' + r.path + ' HTTP ' + (r.status || 'network'))
+  }
+  log('SMOKE_RESULT=' + (pass ? 'PASS' : 'FAIL'))
+  log('[done]')
+})()
+</script>
+</body>
+</html>

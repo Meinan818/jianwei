@@ -15,7 +15,7 @@
  *   isVip/vipExpireDate  ↔ profiles.is_vip / vip_expire_at
  *   IWalletRecord.type 六种取值与 wallet_txn_type 枚举一一对应
  *
- * 降级口径（与 2a~2f 一致）：未配置 / 未登录 / RPC 失败时保持原本地行为，只记日志；
+ * 未配置 Supabase 时保留本地 Mock；已登录且已配置时，必须等数据库确认后再改页面余额。
  * 支付密码继续用本地 Mock（profiles.pay_password 保留默认值，不参与校验）。
  * point_records 表暂不写（前端无积分明细展示，留给后续）。
  */
@@ -145,6 +145,64 @@ export async function applyWalletTxn(
     console.warn('[wallet] 记账异常', err)
     return null
   }
+}
+
+/**
+ * 可安全重试的原子记账。相同 idempotencyKey 重复调用只返回第一次的流水，不重复改余额。
+ */
+export async function applyWalletTxnOnce(
+  type: DbWalletType,
+  amount: number,
+  title: string,
+  description: string,
+  orderId: string | undefined,
+  idempotencyKey: string,
+): Promise<IWalletRecord | null> {
+  const sb = supabase
+  if (!sb || !idempotencyKey) return null
+  try {
+    const { data, error } = await sb.rpc('apply_wallet_txn_once', {
+      p_type: type,
+      p_amount: amount,
+      p_title: title,
+      p_description: description,
+      p_order_id: orderId && isUuid(orderId) ? orderId : null,
+      p_idempotency_key: idempotencyKey,
+    })
+    if (error || !data) {
+      console.warn('[wallet] 幂等记账失败', type, amount, error?.message)
+      return null
+    }
+    return rowToWalletRecord(Array.isArray(data) ? data[0] : data)
+  } catch (err) {
+    console.warn('[wallet] 幂等记账异常', err)
+    return null
+  }
+}
+
+/** 余额支付：数据库事务内同时扣余额、写流水并推进订单状态。 */
+export async function payOrderWithBalanceRemote(
+  orderId: string,
+  idempotencyKey: string,
+): Promise<IWalletRecord | null> {
+  const sb = supabase
+  if (!sb || !isUuid(orderId) || !idempotencyKey) return null
+  // 响应丢失时服务端可能已经提交。用同一编号再请求一次只会返回原流水。
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const { data, error, status } = await sb.rpc('pay_order_with_balance', {
+        p_order_id: orderId,
+        p_idempotency_key: idempotencyKey,
+      })
+      if (data && !error) return rowToWalletRecord(Array.isArray(data) ? data[0] : data)
+      console.warn('[wallet] 余额支付失败', orderId, error?.message)
+      // 明确的 HTTP 响应（余额不足、订单状态已变等）无须重复请求。
+      if (status !== 0) return null
+    } catch (err) {
+      console.warn('[wallet] 余额支付响应异常', orderId, err)
+    }
+  }
+  return null
 }
 
 /** 同步成长值与累计消费到 profiles（余额不在这里改，走 applyWalletTxn） */

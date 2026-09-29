@@ -4,9 +4,12 @@ import { scopedStorage } from '@lark-apaas/client-toolkit-lite'
 import type { IMemberInfo, IWalletRecord, IWithdrawRecord } from '@/data/member'
 import { MOCK_MEMBER_INFO, MOCK_WALLET_RECORDS, MEMBER_LEVELS, MOCK_WITHDRAW_RECORDS } from '@/data/member'
 import { useAuth } from '@/hooks/useAuth'
+import { supabase } from '@/lib/supabase'
 import {
   fetchWalletSnapshot,
   applyWalletTxn,
+  applyWalletTxnOnce,
+  payOrderWithBalanceRemote,
   syncWalletStats,
   insertWithdrawRecord,
   completeWithdrawRecord,
@@ -30,8 +33,9 @@ interface WalletContextValue {
   // 钱包
   balance: number
   walletRecords: IWalletRecord[]
-  recharge: (amount: number, method?: string) => boolean
+  recharge: (amount: number, method: string | undefined, idempotencyKey: string) => Promise<boolean>
   consumeBalance: (amount: number, title: string, orderId?: string) => boolean
+  payOrderWithBalance: (orderId: string, amount: number) => Promise<boolean>
   refundBalance: (amount: number, title: string, orderId?: string) => boolean
 
   // 支付密码
@@ -131,6 +135,21 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     })
   }, [])
 
+  // 数据库确认成功后再把权威余额和流水写进页面；相同流水 id 重试不会重复展示。
+  const commitConfirmedRecord = useCallback((dbRecord: IWalletRecord) => {
+    mutatedRef.current = true
+    setMemberInfo(prev => {
+      const updated = { ...prev, balance: dbRecord.balanceAfter }
+      scopedStorage.setItem(MEMBER_KEY, JSON.stringify(updated))
+      return updated
+    })
+    setWalletRecords(prev => {
+      const updated = [dbRecord, ...prev.filter(r => r.id !== dbRecord.id)]
+      scopedStorage.setItem(WALLET_KEY, JSON.stringify(updated))
+      return updated
+    })
+  }, [])
+
   // 当前等级 / 下一等级 / 进度
   const currentLevelInfo = MEMBER_LEVELS.find(l => l.level === memberInfo.level) || MEMBER_LEVELS[0]
   const nextLevelInfo = MEMBER_LEVELS.find(l => l.level === memberInfo.level + 1) || null
@@ -181,8 +200,26 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   }, [isLoggedIn, user?.id])
 
   // 充值
-  const recharge = useCallback((amount: number, method = 'wechat'): boolean => {
+  const recharge = useCallback(async (
+    amount: number,
+    method = 'wechat',
+    idempotencyKey: string,
+  ): Promise<boolean> => {
     if (amount <= 0) return false
+    const title = '余额充值'
+    const desc = `${method === 'wechat' ? '微信支付' : method === 'alipay' ? '支付宝' : '其他方式'}`
+
+    // 已配置真实后端时以数据库为准。请求失败不改本地余额，留在当前页供同 key 重试。
+    if (supabase && isLoggedIn && user?.id) {
+      const dbRecord = await applyWalletTxnOnce(
+        'recharge', amount, title, desc, undefined, `recharge:${idempotencyKey}`,
+      )
+      if (!dbRecord) return false
+      commitConfirmedRecord(dbRecord)
+      return true
+    }
+
+    // 未配置 Supabase 的离线演示保持原来的本地 Mock 行为。
     mutatedRef.current = true
     const time = Date.now()
     const record: IWalletRecord = {
@@ -190,8 +227,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       type: 'recharge',
       amount,
       balanceAfter: 0, // 下面算
-      title: '余额充值',
-      desc: `${method === 'wechat' ? '微信支付' : method === 'alipay' ? '支付宝' : '其他方式'}`,
+      title,
+      desc,
       createdAt: time,
     }
     setMemberInfo(prev => {
@@ -205,14 +242,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       scopedStorage.setItem(WALLET_KEY, JSON.stringify(updated))
       return updated
     })
-    // 数据库原子记账（改 profiles.balance + 写流水），成功后用返回行替换本地临时记录
-    if (isLoggedIn && user?.id) {
-      void applyWalletTxn('recharge', amount, record.title, record.desc).then(dbRec => {
-        if (dbRec) patchRecord(record.id, dbRec)
-      })
-    }
     return true
-  }, [isLoggedIn, user?.id, patchRecord])
+  }, [isLoggedIn, user?.id, commitConfirmedRecord])
 
   // 消费
   const consumeBalance = useCallback((amount: number, title: string, orderId?: string): boolean => {
@@ -250,6 +281,19 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     }
     return ok
   }, [isLoggedIn, user?.id, patchRecord])
+
+  // 余额支付由服务端事务保证：扣款、流水、订单状态要么一起成功，要么全部回滚。
+  const payOrderWithBalance = useCallback(async (orderId: string, amount: number): Promise<boolean> => {
+    if (amount <= 0) return false
+    if (supabase && isLoggedIn && user?.id) {
+      const dbRecord = await payOrderWithBalanceRemote(orderId, `balance-order:${orderId}`)
+      if (!dbRecord) return false
+      commitConfirmedRecord(dbRecord)
+      return true
+    }
+    if (memberInfo.balance < amount) return false
+    return consumeBalance(amount, `订单支付 ${orderId.slice(-6)}`, orderId)
+  }, [memberInfo.balance, isLoggedIn, user?.id, commitConfirmedRecord, consumeBalance])
 
   const refundBalance = useCallback((amount: number, title: string, orderId?: string): boolean => {
     if (amount <= 0) return false
@@ -396,6 +440,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     walletRecords,
     recharge,
     consumeBalance,
+    payOrderWithBalance,
     refundBalance,
     hasPayPassword,
     verifyPayPassword,
