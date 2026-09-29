@@ -5,6 +5,7 @@ import {
   ArrowLeft, Check, Wallet, CreditCard, Clock, AlertTriangle,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { useOrders } from '@/hooks/useOrders'
 import { useWallet } from '@/hooks/useWallet'
 import { useCoupons } from '@/hooks/useCoupons'
@@ -36,6 +37,7 @@ export default function PaymentPage() {
 
   const [method, setMethod] = useState('wechat')
   const [processing, setProcessing] = useState(false)
+  const paymentInFlight = useRef(false)
   const [showPayPwd, setShowPayPwd] = useState(false)
   const [payPwdValue, setPayPwdValue] = useState('')
   const pwdRef = useRef<HTMLInputElement>(null)
@@ -106,66 +108,70 @@ export default function PaymentPage() {
   }
 
   const doPay = async () => {
+    // state 禁用按钮要等重渲染，ref 当场拦住同一帧内的重复点击。
+    if (paymentInFlight.current) return
+    paymentInFlight.current = true
     setProcessing(true)
-    // 模拟支付处理延时
-    await new Promise(r => setTimeout(r, 1200))
-    if (method === 'balance') {
-      const ok = consumeBalance(payAmount, isRecharge ? '余额充值扣款' : `订单支付 ${orderId.slice(-6)}`, orderId || undefined)
-      if (!ok) {
-        setProcessing(false)
-        toast.error('余额扣款失败')
-        return
-      }
-    }
-    if (isRecharge) {
-      // 充值模式：支付成功后调用 recharge 到账
-      const ok = recharge(rechargeAmount, method)
-      if (!ok) {
-        setProcessing(false)
-        toast.error('充值失败，请重试')
-        return
-      }
-      // 充值成功 → 跳回会员中心
-      navigateReplace('/customer/member')
-      setTimeout(() => {
-        try { toast.success(`充值成功 ¥${rechargeAmount.toFixed(2)}`) } catch { /* ignore */ }
-      }, 0)
-      return
-    }
-    // 订单支付模式
-    if (!order) {
-      setProcessing(false)
-      return
-    }
-    const paid = payOrder(order.id, method)
-    if (!paid) {
-      setProcessing(false)
-      toast.error('支付失败，请重试')
-      return
-    }
-    // ✅ 支付成功立即跳转，任何后置动作失败都不能阻断跳转
-    const targetOrderId = order.id
-    navigateReplace(`/payment/success?orderId=${targetOrderId}`)
-    // 后置动作：各自 try/catch 隔离，失败不影响主流程
-    setTimeout(() => {
-      try {
-        if (order.couponInfo?.couponId) {
-          markUsed(order.couponInfo.couponId)
+    try {
+      // 模拟支付处理延时
+      await new Promise(r => setTimeout(r, 1200))
+      if (method === 'balance') {
+        const ok = consumeBalance(payAmount, isRecharge ? '余额充值扣款' : `订单支付 ${orderId.slice(-6)}`, orderId || undefined)
+        if (!ok) {
+          toast.error('余额扣款失败')
+          return
         }
-      } catch {
-        /* ignore */
       }
-      try {
-        addPointsAndGrowth(order.finalAmount, targetOrderId)
-      } catch {
-        /* ignore */
+      if (isRecharge) {
+        // 充值模式：支付成功后调用 recharge 到账
+        const ok = recharge(rechargeAmount, method)
+        if (!ok) {
+          toast.error('充值失败，请重试')
+          return
+        }
+        // 充值成功 → 跳回会员中心
+        navigateReplace('/customer/member')
+        setTimeout(() => {
+          try { toast.success(`充值成功 ¥${rechargeAmount.toFixed(2)}`) } catch { /* ignore */ }
+        }, 0)
+        return
       }
-      try {
-        toast.success('支付成功')
-      } catch {
-        /* ignore */
+      // 订单支付模式
+      if (!order) {
+        return
       }
-    }, 0)
+      const paid = payOrder(order.id, method)
+      if (!paid) {
+        toast.error('支付失败，请重试')
+        return
+      }
+      // ✅ 支付成功立即跳转，任何后置动作失败都不能阻断跳转
+      const targetOrderId = order.id
+      navigateReplace(`/payment/success?orderId=${targetOrderId}`)
+      // 后置动作：各自 try/catch 隔离，失败不影响主流程
+      setTimeout(() => {
+        try {
+          if (order.couponInfo?.couponId) {
+            markUsed(order.couponInfo.couponId)
+          }
+        } catch {
+          /* ignore */
+        }
+        try {
+          addPointsAndGrowth(order.finalAmount, targetOrderId)
+        } catch {
+          /* ignore */
+        }
+        try {
+          toast.success('支付成功')
+        } catch {
+          /* ignore */
+        }
+      }, 0)
+    } finally {
+      paymentInFlight.current = false
+      setProcessing(false)
+    }
   }
 
   const handleCancel = () => {
@@ -381,6 +387,30 @@ export default function PaymentPage() {
         </Button>
       </div>
       {/* /isPayable 条件结束 — 底部按钮栏在骨架态也不显示，统一由 loading 层接管 */}
+      <Dialog open={showPayPwd} onOpenChange={setShowPayPwd}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>输入支付密码</DialogTitle>
+            <DialogDescription>余额支付 ¥{payAmount.toFixed(2)}，演示支付密码为 123456</DialogDescription>
+          </DialogHeader>
+          <input
+            ref={pwdRef}
+            type="password"
+            inputMode="numeric"
+            autoComplete="off"
+            maxLength={6}
+            aria-label="支付密码"
+            placeholder="请输入6位支付密码"
+            value={payPwdValue}
+            onChange={e => setPayPwdValue(e.target.value.replace(/\D/g, '').slice(0, 6))}
+            onKeyDown={e => { if (e.key === 'Enter') void confirmPayWithPwd() }}
+            className="h-12 w-full rounded-xl border border-border bg-muted/30 px-4 text-center text-lg tracking-widest outline-none focus:border-primary"
+          />
+          <Button onClick={confirmPayWithPwd} disabled={processing || payPwdValue.length !== 6}>
+            确认付款
+          </Button>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

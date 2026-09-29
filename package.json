@@ -12,6 +12,7 @@
     "lint:eslint": "eslint src",
     "precommit": "npm run lint",
     "smoke": "npm run build:standalone && node scripts/e2e-smoke.mjs",
+    "verify:coupon-wallet": "npm run build:standalone && node scripts/e2e-coupon-wallet.mjs",
     "prepare": "node scripts/setup-git-hooks.mjs"
   },
   "dependencies": {
