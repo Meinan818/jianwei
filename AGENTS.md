@@ -30,7 +30,7 @@
 | 项 | 现状 |
 |---|---|
 | 线上站点 | **第十五版**（钱包断网恢复、同编号防重复记账、余额支付原子事务已发布） |
-| Git 基线 | 生产 `main` / `origin/main` 为 `040eb77`；当前检出 `codex/membership-pending-sql`，会员开通在此分支准备交接与 Push |
+| Git 基线 | 生产 `main` / `origin/main` 为 `040eb77`；当前检出 `codex/membership-pending-sql`，准备提交 `30f6d03` 已 Push 到同名远程分支 |
 | 关键提交 | `ab9e581` 钱包断网一致性与重复记账；`a684850` 余额支付弹层与优惠券钱包回归；`da6c3df` 规格/加料与分类管理上云；`e363ffc` 支付/抢单提示误报 + 到店自取；`3aac1d2` 骑手链路落库 |
 | 已在真机验证 | `npm run smoke`（真浏览器三端 18 页巡检）+ 7 个针对性回归脚本：商家端商品管理、商家拒单、购物车加减号、顾客被拒单提醒、骑手主链路（抢单→取餐→配送→送达）、支付、到店自取；另有 `verify-realtime.mjs`（跨端推送）与 `verify-merchant-config.mjs`（商家写库 + 越权对照） |
 | 第十三版验证 | `tsc`、`eslint`、`build:standalone`、三端 `npm run smoke` 和离线 SQL 校验通过；SQL Editor 返回 `Success. No rows returned`；线上首页 HTTP 200 且脚本含新功能标记；用户反馈跨设备“同步”。新功能没有单独的自动化浏览器端到端脚本 |
@@ -426,6 +426,7 @@ rejected         商家拒单（终态）
 - 本地已接入收银台的模拟微信、支付宝与余额支付；`20260929020000_membership_purchase.sql` 增加会员付款记录与事务函数，固定 ¥15 / 30 天。余额付款时将资格、扣款和单条流水一起提交；同操作编号重试不会重复收费或延长时间。前端按数据库有效期判定 VIP，刷新和重新登录后从数据库恢复。
 - 已通过 `npm run test:membership` 两项会员纯逻辑测试、本地 PGlite SQL 迁移连续执行两遍及余额付款/模拟微信支付宝/幂等/回滚/权限校验、三端 `npm run smoke`、会员收银台浏览器预检；修改共用收银台后原有 `verify:coupon-wallet`、钱包断网七项仍通过。完整 `npm run verify:membership` 尚未运行，须等迁移执行后再跑；目前不要把此功能标为已上线或已全链路验证。
 - **接手顺序**：当前分支 `codex/membership-pending-sql` 保存代码、迁移、测试及交接。先由用户在 Supabase → SQL Editor 执行 `supabase/migrations/20260929020000_membership_purchase.sql`（末尾应返回 `purchase_membership` 一行）；然后运行 `npm run verify:membership`，核对付款失败不扣款、响应丢失重试只扣一次、刷新及重新登录后会员仍在。测试脚本每次创建独立顾客，模拟记录保留，不删库。失败就修复并复验。
+- 准备提交 `30f6d03` 已 Push 到 `origin/codex/membership-pending-sql`。生产站点回访标题为「饭否外卖」，实际脚本含第十五版 `balance-order:` 标记且不含 `purchase_membership`；线上尚未发布会员功能。
 - 全链路通过后把 `APP_EDITION` 从 15 升到 16，跑 `tsc` / ESLint / `build:standalone` / `smoke`，启动本地预览并**只给用户链接**，等用户亲手验收。此后只有用户再次明确授权 Push 生产 `main` 才发布；分支 Push 只用于保存待 SQL 工作。
 
 ## 7. 已知未修问题（P2，不阻断演示，可择机处理）
