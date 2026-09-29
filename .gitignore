@@ -68,3 +68,4 @@ pnpm-lock.yaml
 .env
 .env.*
 !.env.example
+.workbuddy/memory/
